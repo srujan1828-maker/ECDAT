@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ======================================================================
+   ECDAT Design System — Tailwind v4 CSS Custom Properties
+   All custom tokens MUST live here for @theme inline to expose them.
+   ====================================================================== */
+
+:root {
+  /* ── Light-mode base (Shadcn defaults kept for parity) ── */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  /* ── ECDAT Forced Dark Mode Theme ── */
+  --background: oklch(0.11 0.012 250);      /* slate-950 */
+  --foreground: oklch(0.97 0.005 240);      /* slate-100 */
+  --card: oklch(0.15 0.012 250);            /* slate-900 */
+  --card-foreground: oklch(0.97 0.005 240);
+  --popover: oklch(0.19 0.012 250);         /* slate-800 */
+  --popover-foreground: oklch(0.97 0.005 240);
+  --primary: oklch(0.72 0.15 196);          /* cyan-500 */
+  --primary-foreground: oklch(0.11 0.012 250);
+  --secondary: oklch(0.19 0.012 250);       /* slate-800 */
+  --secondary-foreground: oklch(0.97 0.005 240);
+  --muted: oklch(0.19 0.012 250);
+  --muted-foreground: oklch(0.65 0.01 240); /* slate-400 */
+  --accent: oklch(0.72 0.15 196);           /* cyan-500 */
+  --accent-foreground: oklch(0.11 0.012 250);
+  --destructive: oklch(0.63 0.24 25);       /* red-500 */
+  --destructive-foreground: oklch(0.97 0.005 240);
+  --border: oklch(0.25 0.012 250);          /* slate-700 */
+  --input: oklch(0.25 0.012 250);
+  --ring: oklch(0.72 0.15 196);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.15 0.012 250);
+  --sidebar-foreground: oklch(0.97 0.005 240);
+  --sidebar-primary: oklch(0.72 0.15 196);
+  --sidebar-primary-foreground: oklch(0.11 0.012 250);
+  --sidebar-accent: oklch(0.19 0.012 250);
+  --sidebar-accent-foreground: oklch(0.97 0.005 240);
+  --sidebar-border: oklch(0.25 0.012 250);
+  --sidebar-ring: oklch(0.72 0.15 196);
+
+  /* ── ECDAT Semantic Extras ── */
+  --ecdat-canvas: oklch(0.11 0.012 250);
+  --ecdat-surface: oklch(0.15 0.012 250);
+  --ecdat-surface-raised: oklch(0.19 0.012 250);
+  --ecdat-border-subtle: oklch(0.22 0.012 250);
+
+  --ecdat-critical: oklch(0.63 0.24 25);    /* red-500 */
+  --ecdat-high: oklch(0.74 0.18 60);        /* amber-500 */
+  --ecdat-medium: oklch(0.83 0.19 85);      /* yellow-400 */
+  --ecdat-low: oklch(0.65 0.17 155);        /* emerald-500 */
+  --ecdat-cyan: oklch(0.72 0.15 196);       /* cyan-500 */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Expose ECDAT custom tokens as Tailwind utility classes */
+  --color-canvas: var(--ecdat-canvas);
+  --color-surface: var(--ecdat-surface);
+  --color-surface-raised: var(--ecdat-surface-raised);
+  --color-subtle: var(--ecdat-border-subtle);
+
+  --color-risk-critical: var(--ecdat-critical);
+  --color-risk-high: var(--ecdat-high);
+  --color-risk-medium: var(--ecdat-medium);
+  --color-risk-low: var(--ecdat-low);
+  --color-risk-cyan: var(--ecdat-cyan);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 8px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  html, body {
+    color-scheme: dark;
+  }
+}
