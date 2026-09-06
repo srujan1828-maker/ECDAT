@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import asyncio
+import os
 
 from engine.network_prober import probe_tls_endpoint
 from engine.ast_scanner import scan_code, generate_remediation_snippet
@@ -21,30 +22,27 @@ app = FastAPI(
     version="2.0.0",
 )
 
-import os
-
-cors_env = os.getenv("CORS_ORIGINS", "")
-allowed_origins = [
-    "http://localhost:3000", "http://127.0.0.1:3000",
-    "http://localhost:3001", "http://127.0.0.1:3001",
-]
-if cors_env:
-    extra_origins = [orig.strip() for orig in cors_env.split(",") if orig.strip()]
-    if "*" in extra_origins:
-        allowed_origins = ["*"]
-    else:
-        allowed_origins.extend(extra_origins)
+# ── CORS Middleware Configuration ──────────────────────────────────────────────
+cors_env = os.getenv("CORS_ORIGINS", "*").strip()
+if not cors_env or cors_env == "*":
+    allowed_origins = ["*"]
+else:
+    allowed_origins = [orig.strip() for orig in cors_env.split(",") if orig.strip()]
+    for local in ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"]:
+        if local not in allowed_origins:
+            allowed_origins.append(local)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True if "*" not in allowed_origins else False,
+    allow_origins=["*"] if "*" in allowed_origins else allowed_origins,
+    allow_origin_regex=r"https?://.*",
+    allow_credentials=False if "*" in allowed_origins else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Request models ─────────────────────────────────────────────────────────────
+# ── Request Models ─────────────────────────────────────────────────────────────
 
 class NetworkScanRequest(BaseModel):
     target: str
@@ -85,17 +83,18 @@ class CBOMRequest(BaseModel):
     target_name: str = "ECDAT-Target"
 
 
-# ═══════════════════════════════════════════════
-# LIVE DISCOVERY & ANALYSIS ENDPOINTS
-# ═══════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# API ROUTER (Available under both /api/* and /*)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-@app.post("/api/scan/network")
+router = APIRouter()
+
+@router.post("/scan/network")
 async def scan_network(req: NetworkScanRequest):
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, probe_tls_endpoint, req.target, req.port, 3.0)
 
     if result.get("status") != "error":
-        # Ingest into Knowledge Graph (Module 3)
         service_name = f"Service: {req.target}:{req.port}"
         primitive    = f"Protocol: {result.get('protocol', 'Unknown')} / {result.get('bulk_cipher', result.get('cipher_name', 'Unknown'))}"
         severity     = result.get("hndl_risk", "low").lower()
@@ -109,12 +108,11 @@ async def scan_network(req: NetworkScanRequest):
     return result
 
 
-@app.post("/api/scan/code")
+@router.post("/scan/code")
 async def scan_code_endpoint(req: CodeScanRequest):
     loop = asyncio.get_event_loop()
     res = await loop.run_in_executor(None, scan_polyglot_code, req.source_code, req.language)
 
-    # Ingest findings into Knowledge Graph (Module 3)
     target_app = f"App: {req.language.upper()} Code Target"
     for finding in res.get("findings", []):
         primitive = f"Algo: {finding.get('primitive', 'Unknown')} ({req.language})"
@@ -124,13 +122,13 @@ async def scan_code_endpoint(req: CodeScanRequest):
     return res
 
 
-@app.get("/api/polyglot/samples")
+@router.get("/polyglot/samples")
 def get_polyglot_samples():
     """Returns curated vulnerable samples for Python, Java, C/C++, Go, and JS."""
     return POLYGLOT_SAMPLES
 
 
-@app.post("/api/scan/binary")
+@router.post("/scan/binary")
 async def scan_binary_endpoint(req: BinaryScanRequest):
     """
     Module 10: Binary & Firmware Cryptographic Constant / S-Box Scanner.
@@ -138,19 +136,16 @@ async def scan_binary_endpoint(req: BinaryScanRequest):
     """
     if req.raw_hex and req.raw_hex.strip():
         try:
-            # Clean hex string (remove 0x, spaces, newlines)
             cleaned_hex = req.raw_hex.replace("0x", "").replace(" ", "").replace("\n", "").replace("\r", "")
             raw_bytes = bytes.fromhex(cleaned_hex)
         except Exception:
             raw_bytes = req.raw_hex.encode("utf-8")
     else:
-        # Use synthetic compiled ELF firmware binary with embedded S-boxes
         raw_bytes = generate_sample_binary_blob()
 
     loop = asyncio.get_event_loop()
     res = await loop.run_in_executor(None, scan_binary_data, raw_bytes, req.file_name or "firmware_telemetry.bin")
 
-    # Ingest into Knowledge Graph (Module 3)
     firmware_node = f"Firmware: {req.file_name or 'firmware_telemetry.bin'}"
     for det in res.get("detections", []):
         prim_node = f"Binary Primitive: {det.get('primitive')}"
@@ -160,7 +155,7 @@ async def scan_binary_endpoint(req: BinaryScanRequest):
     return res
 
 
-@app.post("/api/agility/evaluate")
+@router.post("/agility/evaluate")
 def evaluate_agility(req: AgilityRequest):
     """Module 7: Cryptographic Agility Index (CAI) evaluation."""
     return calculate_crypto_agility(
@@ -173,7 +168,7 @@ def evaluate_agility(req: AgilityRequest):
     )
 
 
-@app.post("/api/migration/simulate")
+@router.post("/migration/simulate")
 def simulate_migration(req: MigrationSimRequest):
     """Simulates multi-phase PQC Migration Gantt timeline."""
     return simulate_pqc_migration_roadmap(
@@ -185,14 +180,13 @@ def simulate_migration(req: MigrationSimRequest):
     )
 
 
-@app.post("/api/risk/mosca")
+@router.post("/risk/mosca")
 def evaluate_mosca(req: MoscaRequest):
     return calculate_mosca_risk(req.x, req.y, req.z)
 
 
-@app.post("/api/export/cbom")
+@router.post("/export/cbom")
 def export_cbom(req: CBOMRequest):
-    # Combine code and binary findings for comprehensive CBOM
     all_code = req.code_findings.copy()
     if req.binary_findings:
         for b in req.binary_findings:
@@ -206,37 +200,42 @@ def export_cbom(req: CBOMRequest):
     return generate_cyclonedx_cbom(all_code, req.network_findings, req.target_name)
 
 
-# ═══════════════════════════════════════════════
-# DEMO & GRAPH STATE ENDPOINTS
-# ═══════════════════════════════════════════════
-
-@app.get("/api/demo/overview")
+@router.get("/demo/overview")
 def demo_overview():
     """Live knowledge graph — continuously updated as scans execute."""
     return {"kpis": kg.get_kpis(), "graph": kg.export_for_ui()}
 
 
-@app.post("/api/demo/network")
+@router.post("/demo/network")
 def demo_network():
     return DEMO_NETWORK
 
 
-@app.post("/api/demo/code")
+@router.post("/demo/code")
 def demo_code():
     return DEMO_CODE
 
 
-@app.post("/api/demo/mosca")
+@router.post("/demo/mosca")
 def demo_mosca(req: MoscaRequest):
     return calculate_mosca_risk(req.x, req.y, req.z)
 
 
-@app.post("/api/demo/cbom")
+@router.post("/demo/cbom")
 def demo_cbom(req: Optional[CBOMRequest] = None):
     findings = (req.code_findings if req else None) or DEMO_CODE["findings"]
     network  = (req.network_findings if req else None) or [DEMO_NETWORK]
     target   = (req.target_name if req else None) or "ECDAT-Demo-SIH26164"
     return generate_cyclonedx_cbom(findings, network, target)
+
+
+# ── Mount router at BOTH /api and root / ────────────────────────────────────────
+app.include_router(router, prefix="/api")
+app.include_router(router, prefix="")
+
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "ECDAT API", "version": "2.0.0"}
 
 
 if __name__ == "__main__":
