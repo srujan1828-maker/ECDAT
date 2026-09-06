@@ -21,13 +21,24 @@ app = FastAPI(
     version="2.0.0",
 )
 
+import os
+
+cors_env = os.getenv("CORS_ORIGINS", "")
+allowed_origins = [
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:3001", "http://127.0.0.1:3001",
+]
+if cors_env:
+    extra_origins = [orig.strip() for orig in cors_env.split(",") if orig.strip()]
+    if "*" in extra_origins:
+        allowed_origins = ["*"]
+    else:
+        allowed_origins.extend(extra_origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", "http://127.0.0.1:3000",
-        "http://localhost:3001", "http://127.0.0.1:3001",
-    ],
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_credentials=True if "*" not in allowed_origins else False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -230,4 +241,6 @@ def demo_cbom(req: Optional[CBOMRequest] = None):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    port = int(os.getenv("PORT", 8000))
+    host = os.getenv("HOST", "0.0.0.0")
+    uvicorn.run("main:app", host=host, port=port, reload=True)

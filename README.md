@@ -172,6 +172,30 @@ npm run dev
 
 ---
 
+## ☁️ Cloud Deployment & Environment Variables
+
+When deploying ECDAT to cloud platforms (e.g. **Vercel**, **Render**, **Railway**, **AWS**, **GCP Cloud Run**, **Azure**), configure the following environment variables:
+
+### 1. Frontend Environment Variables (Next.js / Vercel)
+| Variable | Required | Description | Example |
+| :--- | :---: | :--- | :--- |
+| `NEXT_PUBLIC_API_URL` | **YES** | Publicly accessible HTTPS URL of your deployed FastAPI backend API. | `https://ecdat-backend.onrender.com/api` |
+| `NODE_ENV` | Optional | Node execution mode (`production` or `development`). | `production` |
+| `PORT` | Optional | Frontend server port (injected automatically by PaaS). | `3000` |
+
+> [!IMPORTANT]
+> Because Next.js client components make browser requests directly from the user's browser, `NEXT_PUBLIC_API_URL` must point to the **public HTTPS address** of your backend, not `localhost` or an internal VPC hostname.
+
+### 2. Backend Environment Variables (FastAPI / Uvicorn)
+| Variable | Required | Description | Example |
+| :--- | :---: | :--- | :--- |
+| `CORS_ORIGINS` | **YES** | Comma-separated list of allowed frontend domains (or `*` for open demo). | `https://ecdat.vercel.app,https://yourdomain.com` |
+| `PORT` | Optional | Port the backend binds to (injected automatically by PaaS). | `8000` |
+| `HOST` | Optional | Host IP to bind (must be `0.0.0.0` for Docker / containers). | `0.0.0.0` |
+| `ENVIRONMENT` | Optional | Application runtime stage. | `production` |
+
+---
+
 ## 🧪 Live Demo & Test Targets
 
 | Tab | Action / Input | Expected Result |
