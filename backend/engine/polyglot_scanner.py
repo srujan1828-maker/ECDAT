@@ -421,51 +421,30 @@ LANGUAGE_RULES = {
     ]
 }
 
-def scan_polyglot_code(source_code: str, language: str = "python") -> Dict[str, Any]:
-    """
-    Multi-language AST and static analysis engine for ECDAT.
-    Supports Python, Java, C/C++, Go, and JavaScript/Node.js.
-    """
+def mask_comments(source):
+    """Replace comments with whitespace while preserving strings and source lines."""
+    pattern = r'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`)|(//[^\n]*|/\*.*?\*/)'
+    def replace(match):
+        if match.group(1):
+            return match.group(1)
+        return ''.join('\n' if c == '\n' else ' ' for c in match.group(0))
+    return re.sub(pattern, replace, source, flags=re.DOTALL)
+
+
+def scan_polyglot_code(source_code: str, language: str = 'python') -> Dict[str, Any]:
     lang = language.lower().strip()
     if lang not in LANGUAGE_RULES:
-        lang = "python"
-
-    findings: List[Dict[str, Any]] = []
+        raise ValueError('Unsupported language')
+    cleaned = mask_comments(source_code) if lang != 'python' else source_code
     lines = source_code.splitlines()
-
-    rules = LANGUAGE_RULES[lang]
-
-    for idx, line in enumerate(lines, start=1):
-        line_clean = line.strip()
-        # Skip pure comments depending on language
-        if lang in ["java", "c_cpp", "golang", "javascript"]:
-            if line_clean.startswith("//") or line_clean.startswith("/*") or line_clean.startswith("*"):
-                continue
-        elif lang == "python":
-            if line_clean.startswith("#"):
-                continue
-
-        for pattern, primitive, category, severity, issue, nist_rec, q_risk in rules:
-            if re.search(pattern, line, re.IGNORECASE):
-                findings.append({
-                    "line": idx,
-                    "code": line_clean,
-                    "primitive": primitive,
-                    "category": category,
-                    "severity": severity,
-                    "issue": issue,
-                    "nist_recommendation": nist_rec,
-                    "quantum_risk": q_risk,
-                    "language": lang
-                })
-
-    remediation = POLYGLOT_REMEDIATIONS.get(lang, POLYGLOT_REMEDIATIONS["python"])
-
-    return {
-        "language": lang,
-        "findings": findings,
-        "total_findings": len(findings),
-        "critical_count": sum(1 for f in findings if f["severity"] == "CRITICAL"),
-        "high_count": sum(1 for f in findings if f["severity"] == "HIGH"),
-        "remediation": remediation
-    }
+    findings = []
+    for pattern, primitive, category, severity, issue, recommendation, quantum_risk in LANGUAGE_RULES[lang]:
+        for match in re.finditer(pattern, cleaned, re.IGNORECASE):
+            line = cleaned.count('\n', 0, match.start()) + 1
+            findings.append({'line': line, 'code': lines[line - 1].strip(), 'primitive': primitive,
+                'category': category, 'severity': severity, 'issue': issue,
+                'nist_recommendation': recommendation, 'quantum_risk': quantum_risk, 'language': lang})
+    findings.sort(key=lambda f: f['line'])
+    return {'language': lang, 'findings': findings, 'total_findings': len(findings),
+            'critical_count': sum(f['severity'] == 'CRITICAL' for f in findings),
+            'high_count': sum(f['severity'] == 'HIGH' for f in findings), 'remediation': ''}

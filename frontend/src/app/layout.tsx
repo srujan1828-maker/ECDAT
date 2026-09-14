@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 const geistSans = Geist({
@@ -16,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "ECDAT | Enterprise Cryptographic Discovery & Analysis Tool",
-  description: "SIH26164 — NTRO. Real-time cryptographic posture management, AST-based vulnerability scanning, and NIST post-quantum migration planning.",
+  description: "Evidence-based source, TLS, and binary cryptographic discovery with persistent scan history.",
 };
 
 export default function RootLayout({
@@ -36,3 +35,4 @@ export default function RootLayout({
     </html>
   );
 }
+

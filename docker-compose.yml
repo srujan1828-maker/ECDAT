@@ -1,35 +1,30 @@
 services:
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: ecdat-backend
-    ports:
-      - "8000:8000"
+    build: ./backend
     environment:
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
+      ECDAT_DB: /data/scans.sqlite3
+      ECDAT_API_TOKEN: ${ECDAT_API_TOKEN:-}
+      ECDAT_ALLOWED_CIDRS: ${ECDAT_ALLOWED_CIDRS:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - scan-data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/demo/overview"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 5s
-
+    restart: unless-stopped
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: ecdat-frontend
-    ports:
-      - "3000:3000"
+    build: ./frontend
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      BACKEND_API_URL: http://backend:8000/api
+    ports:
+      - "127.0.0.1:3000:3000"
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
-
-networks:
-  default:
-    name: ecdat-network
+volumes:
+  scan-data:

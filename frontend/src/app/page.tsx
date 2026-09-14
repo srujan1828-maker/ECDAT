@@ -1,1265 +1,146 @@
-"use client";
+'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import dynamic from "next/dynamic";
-import {
-  fetchOverview, scanNetwork, scanCode,
-  evaluateMosca, exportCbom, scanBinary,
-  evaluateAgility, simulateMigration, fetchPolyglotSamples,
-} from "@/lib/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Slider } from "@/components/ui/slider";
-import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Shield, ShieldAlert, Activity, Code, Globe, FileKey,
-  CheckCircle2, ChevronDown, Download, Server, RefreshCcw,
-  AlertTriangle, Database, Network, Lock, TrendingUp,
-  Zap, BookOpen, ChevronRight, XCircle, Cpu, Binary,
-  Compass, ShieldCheck, Layers, Terminal, Calendar,
-  FileCode2, Check, ExternalLink, Flame
-} from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useCallback, useEffect, useState } from 'react';
+import { Activity, Binary, Code2, Download, Globe, ShieldCheck, RefreshCw } from 'lucide-react';
+import { requestApi, Scan, ScanResult } from '@/lib/api';
 
-// ─── Force Graph (SSR-safe) ───────────────────────────────────────────────────
-const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
+const inputClass = 'w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400';
+const buttonClass = 'rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:opacity-40 disabled:cursor-not-allowed';
+const languageExtensions: Record<string, string> = { python: 'py', java: 'java', c_cpp: 'cpp', golang: 'go', javascript: 'js' };
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+export default function Dashboard() {
+  const [projectInput, setProjectInput] = useState('default');
+  const [project, setProject] = useState('default');
+  const [token, setToken] = useState('');
+  const [mode, setMode] = useState<'network' | 'code' | 'binary'>('network');
+  const [target, setTarget] = useState('');
+  const [language, setLanguage] = useState('python');
+  const [code, setCode] = useState('');
+  const [sourceFiles, setSourceFiles] = useState<File[]>([]);
+  const [binary, setBinary] = useState<File | null>(null);
+  const [scans, setScans] = useState<Scan[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [exportIds, setExportIds] = useState<string[]>([]);
 
-interface KPIs {
-  total_findings: number;
-  critical: number;
-  quantum_vulnerable_certs: number;
-  est_migration_effort: string;
-}
-
-interface GraphNode {
-  id: string;
-  label: string;
-  group: string;
-  severity: string;
-  blast_radius?: string[];
-}
-
-interface GraphLink { source: string; target: string; label?: string; }
-interface OverviewData { kpis: KPIs; graph: { nodes: GraphNode[]; links: GraphLink[] }; }
-
-interface Finding {
-  line: number | string;
-  code: string;
-  primitive: string;
-  category: string;
-  severity: string;
-  issue: string;
-  nist_recommendation: string;
-  quantum_risk: string;
-  language?: string;
-}
-
-interface NistMapping {
-  category: string;
-  legacy_primitive: string;
-  quantum_threat: string;
-  pqc_standard: string;
-  security_levels: string;
-  urgency: string;
-}
-
-interface MoscaResult {
-  is_critical: boolean;
-  posture_status: string;
-  explanation: string;
-  deficit_years: number;
-  total_time_needed: number;
-  x_shelf_life: number;
-  y_migration_time: number;
-  z_crqc_horizon: number;
-  nist_mapping?: NistMapping[];
-}
-
-// ─── Design tokens ────────────────────────────────────────────────────────────
-
-const C = {
-  canvas:   "bg-[var(--ecdat-canvas)]",
-  surface:  "bg-[var(--ecdat-surface)]",
-  raised:   "bg-[var(--ecdat-surface-raised)]",
-  border:   "border-[var(--ecdat-border-subtle)]",
-} as const;
-
-const sevBadge = (s: string) => {
-  const l = (s ?? "").toLowerCase();
-  if (l === "critical") return "bg-red-500/10 text-red-400 border border-red-500/20";
-  if (l === "high")     return "bg-amber-500/10 text-amber-400 border border-amber-500/20";
-  if (l === "medium")   return "bg-yellow-400/10 text-yellow-400 border border-yellow-400/20";
-  return "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
-};
-
-const sevNodeColor = (s: string) => {
-  const l = (s ?? "").toLowerCase();
-  if (l === "critical") return "#ef4444";
-  if (l === "high")     return "#f59e0b";
-  if (l === "medium")   return "#facc15";
-  return "#10b981";
-};
-
-const urgencyBadge = (u: string) => {
-  if (u === "IMMEDIATE") return "bg-red-500/10 text-red-400 border border-red-500/20";
-  if (u === "HIGH")      return "bg-amber-500/10 text-amber-400 border border-amber-500/20";
-  if (u === "MEDIUM")    return "bg-yellow-400/10 text-yellow-400 border border-yellow-400/20";
-  return "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
-};
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function KpiCard({
-  label, value, sub, valueClass = "text-slate-100",
-  icon: Icon, accent,
-}: {
-  label: string; value: string | number; sub?: string;
-  valueClass?: string; icon: React.ElementType; accent: string;
-}) {
-  return (
-    <Card className={`${C.surface} ${C.border} overflow-hidden`}>
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between mb-3">
-          <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${accent}`}>
-            <Icon className="w-4 h-4" />
-          </div>
-        </div>
-        <p className={`text-3xl font-bold font-mono tracking-tight ${valueClass}`}>{value}</p>
-        <p className="text-xs font-medium text-slate-400 mt-1.5 uppercase tracking-widest">{label}</p>
-        {sub && <p className="text-[11px] text-slate-500 mt-1">{sub}</p>}
-      </CardContent>
-    </Card>
-  );
-}
-
-const Divider = () => <div className={`border-t ${C.border}`} />;
-
-const KNOWN_TARGETS = [
-  { domain: "google.com",                note: "Modern TLS 1.3 / AES-256-GCM" },
-  { domain: "rc4.badssl.com",            note: "RC4 stream cipher — RFC 7465" },
-  { domain: "expired.badssl.com",        note: "Expired X.509 certificate" },
-  { domain: "null.badssl.com",           note: "NULL cipher — zero encryption" },
-  { domain: "tls-v1-0.badssl.com:1010",  note: "TLS 1.0 — POODLE vulnerable" },
-  { domain: "sha1-intermediate.badssl.com", note: "SHA-1 intermediate cert" },
-];
-
-const NAV = [
-  { id: "overview", label: "Overview",            icon: Activity,    desc: "Topology & Blast Radius" },
-  { id: "network",  label: "Network Prober",      icon: Globe,       desc: "TLS & Multi-Factor HNDL" },
-  { id: "code",     label: "Polyglot Code Scanner", icon: Code,      desc: "Python · Java · C · Go · JS" },
-  { id: "binary",   label: "Binary & Firmware",   icon: Binary,      desc: "Module 10: S-Boxes & Hex" },
-  { id: "agility",  label: "Agility & Roadmap",   icon: Compass,     desc: "CAI Index & Gantt Roadmap" },
-  { id: "risk",     label: "CBOM & Quantum Risk", icon: ShieldAlert, desc: "Mosca & CycloneDX v1.6" },
-];
-
-const LANGUAGES = [
-  { id: "python",     label: "Python",     ext: ".py" },
-  { id: "java",       label: "Java",       ext: ".java" },
-  { id: "c_cpp",      label: "C / C++",    ext: ".c" },
-  { id: "golang",     label: "Go",         ext: ".go" },
-  { id: "javascript", label: "Node.js",    ext: ".js" }
-];
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  MAIN DASHBOARD
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export default function ECDATDashboard() {
-  const [activeTab, setActiveTab] = useState("overview");
-  const graphRef  = useRef<HTMLDivElement>(null);
-  const [graphW,  setGraphW]  = useState(900);
+  const refresh = useCallback(async () => {
+    try {
+      const records = await requestApi<Scan[]>('/scans', project, token);
+      setScans(records);
+      setConnected(true);
+    } catch (err) {
+      setConnected(false);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [project, token]);
 
   useEffect(() => {
-    const el = graphRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([e]) => setGraphW(e.contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // ── Overview State ──
-  const [lastScan,      setLastScan]      = useState<string | null>(null);
-  const [overview,      setOverview]      = useState<OverviewData | null>(null);
-  const [ovLoading,     setOvLoading]     = useState(true);
-  const [selectedNode,  setSelectedNode]  = useState<GraphNode | null>(null);
-
-  const loadOverview = useCallback(async () => {
-    setOvLoading(true);
-    const r = await fetchOverview();
-    if (r.data) setOverview(r.data);
-    setOvLoading(false);
-  }, []);
-
-  // ── Network State ──
-  const [netTarget,  setNetTarget]  = useState("google.com");
-  const [netOpen,    setNetOpen]    = useState(false);
-  const [netLoading, setNetLoading] = useState(false);
-  const [netResult,  setNetResult]  = useState<any>(null);
-
-  const runNetworkScan = async () => {
-    setNetLoading(true);
-    setNetResult(null);
-    const [host, portStr] = netTarget.split(":");
-    const r = await scanNetwork(host, portStr ? parseInt(portStr) : 443);
-    setNetResult(r.data);
-    setNetLoading(false);
-    setLastScan(new Date().toLocaleTimeString());
-    loadOverview();
-  };
-
-  // ── Polyglot Code State ──
-  const [selectedLang,  setSelectedLang]  = useState("python");
-  const [polyglotSamples, setPolyglotSamples] = useState<Record<string, string>>({});
-  const [sourceCode,    setSourceCode]    = useState("");
-  const [codeLoading,   setCodeLoading]   = useState(false);
-  const [findings,      setFindings]      = useState<Finding[]>([]);
-  const [remediation,   setRemediation]   = useState("");
-  const [selFinding,    setSelFinding]    = useState<Finding | null>(null);
-  const [codeScanned,   setCodeScanned]   = useState(false);
-
-  const runCodeScan = async (codeToScan?: string, lang?: string) => {
-    setCodeLoading(true);
-    setSelFinding(null);
-    const targetCode = codeToScan ?? sourceCode;
-    const targetLang = lang ?? selectedLang;
-    const r = await scanCode(targetCode, targetLang);
-    if (r.data) {
-      setFindings(r.data.findings ?? []);
-      setRemediation(r.data.remediation ?? "");
-      setCodeScanned(true);
-      loadOverview();
-    }
-    setCodeLoading(false);
-    setLastScan(new Date().toLocaleTimeString());
-  };
-
-  const handleLanguageChange = (newLang: string) => {
-    setSelectedLang(newLang);
-    if (polyglotSamples[newLang]) {
-      setSourceCode(polyglotSamples[newLang]);
-      runCodeScan(polyglotSamples[newLang], newLang);
-    }
-  };
-
-  // ── Binary & Firmware State (Module 10) ──
-  const [binaryLoading, setBinaryLoading] = useState(false);
-  const [binaryResult,  setBinaryResult]  = useState<any>(null);
-  const [binaryFileName, setBinaryFileName] = useState("firmware_telemetry.bin");
-
-  const runBinaryScan = async (rawHex?: string, name?: string) => {
-    setBinaryLoading(true);
-    const r = await scanBinary(rawHex, name ?? binaryFileName);
-    if (r.data) {
-      setBinaryResult(r.data);
-      loadOverview();
-    }
-    setBinaryLoading(false);
-    setLastScan(new Date().toLocaleTimeString());
-  };
-
-  // ── Agility & Roadmap State (Module 7 & Gantt) ──
-  const [agilityResult,   setAgilityResult]   = useState<any>(null);
-  const [migrationRoadmap, setMigrationRoadmap] = useState<any>(null);
-  const [agilityParams, setAgilityParams] = useState({
-    hardcoded_primitives_count: 3,
-    abstracted_primitives_count: 1,
-    has_provider_abstraction: false,
-    has_pqc_hybrid_support: false,
-    automated_cert_rotation: false,
-    uses_config_driven_crypto: true,
-  });
-
-  const runAgilityEvaluation = async () => {
-    const r = await evaluateAgility(agilityParams);
-    if (r.data) setAgilityResult(r.data);
-  };
-
-  const runMigrationSimulation = async (sx = x[0], sy = y[0], sz = z[0]) => {
-    const r = await simulateMigration({
-      x_shelf_life: sx,
-      y_migration_time: sy,
-      z_crqc_horizon: sz,
-      critical_findings_count: findings.filter(f => f.severity === "CRITICAL").length || 3,
-      qv_certs_count: overview?.kpis.quantum_vulnerable_certs ?? 2
-    });
-    if (r.data) setMigrationRoadmap(r.data);
-  };
-
-  // ── Mosca & CBOM State ──
-  const [x, setX] = useState([10]);
-  const [y, setY] = useState([4]);
-  const [z, setZ] = useState([8]);
-  const [mosca,       setMosca]       = useState<MoscaResult | null>(null);
-  const [moscaLoading, setMoscaLoading] = useState(false);
-  const [cbomFilter, setCbomFilter] = useState("all");
-
-  const runMosca = async () => {
-    setMoscaLoading(true);
-    const r = await evaluateMosca(x[0], y[0], z[0]);
-    if (r.data) setMosca(r.data);
-    runMigrationSimulation(x[0], y[0], z[0]);
-    setMoscaLoading(false);
-  };
-
-  const downloadCbom = async () => {
-    const binDets = binaryResult?.detections ?? [];
-    const r = await exportCbom(findings, netResult ? [netResult] : [], binDets, "ECDAT-SIH26164-NTRO");
-    const blob = new Blob([JSON.stringify(r.data ?? {}, null, 2)], { type: "application/json" });
-    const url  = URL.createObjectURL(blob);
-    const a    = Object.assign(document.createElement("a"), { href: url, download: "ecdat_cbom_cyclonedx_v1.6.json" });
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  // ── Bootstrap ───────────────────────────────────────────────────────────────
-  useEffect(() => {
-    loadOverview();
-    runMosca();
-    runAgilityEvaluation();
-    runBinaryScan(); // pre-load binary analysis
-
-    fetchPolyglotSamples().then((res) => {
-      if (res.data) {
-        setPolyglotSamples(res.data);
-        if (res.data["python"]) {
-          setSourceCode(res.data["python"]);
-          runCodeScan(res.data["python"], "python");
-        }
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const update = async () => {
+      try {
+        const records = await requestApi<Scan[]>('/scans', project, token);
+        if (active) { setScans(records); setConnected(true); }
+      } catch (err) {
+        if (active) { setConnected(false); setError(err instanceof Error ? err.message : String(err)); }
+      } finally {
+        if (active) timer = setTimeout(() => void update(), 2500);
       }
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    };
+    void update();
+    return () => { active = false; clearTimeout(timer); };
+  }, [project, token]);
 
-  // ────────────────────────────────────────────────────────────────────────────
-  //  RENDER
-  // ────────────────────────────────────────────────────────────────────────────
-  return (
-    <div className={`flex h-screen overflow-hidden ${C.canvas} text-slate-100 font-sans`}>
+  async function submit() {
+    setBusy(true); setError('');
+    try {
+      let path: string;
+      let body: unknown;
+      if (mode === 'network') {
+        if (!target.trim()) throw new Error('Enter a hostname or HTTPS URL.');
+        path = '/scan/network'; body = { target: target.trim() };
+      } else if (mode === 'binary') {
+        if (!binary) throw new Error('Choose a binary or ZIP file.');
+        if (binary.size === 0 || binary.size > 8 * 1024 * 1024) throw new Error('Upload must contain 1 byte to 8 MiB.');
+        path = '/scan/binary/upload';
+        const form = new FormData(); form.append('file', binary); body = form;
+      } else {
+        path = '/scan/sources';
+        if (sourceFiles.length > 100 || sourceFiles.reduce((sum, f) => sum + f.size, 0) > 8 * 1024 * 1024) throw new Error('Choose at most 100 source files totaling 8 MiB.');
+        const files = sourceFiles.length ? await Promise.all(sourceFiles.map(async file => ({ path: file.webkitRelativePath || file.name, content: await file.text() })))
+          : [{ path: `snippet.${languageExtensions[language]}`, content: code, language }];
+        if (!sourceFiles.length && !code.trim()) throw new Error('Paste code or choose source files.');
+        body = { files };
+      }
+      const scan = await requestApi<Scan>(path, project, token, body);
+      setSelected(scan.id); await refresh();
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  }
 
-      {/* ═════════════════ SIDEBAR ═════════════════ */}
-      <aside className={`w-64 shrink-0 flex flex-col ${C.surface} border-r ${C.border}`}>
+  async function cancel(id: string) {
+    try { await requestApi(`/scans/${id}/cancel`, project, token, {}); await refresh(); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+  }
 
-        {/* Brand */}
-        <div className={`p-5 flex items-center gap-3 border-b ${C.border}`}>
-          <div className="w-9 h-9 rounded-lg bg-cyan-500/15 border border-cyan-500/25 flex items-center justify-center shrink-0">
-            <Shield className="w-5 h-5 text-cyan-400" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-bold tracking-tight text-slate-100 leading-none">ECDAT</p>
-            <p className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">SIH26164 · NTRO Core</p>
-          </div>
-        </div>
+  async function download() {
+    setError('');
+    try {
+      const data = await requestApi('/export/cbom', project, token, { scan_ids: exportIds, target_name: project });
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a'); link.href = url; link.download = `${project}-cbom.json`; link.click(); URL.revokeObjectURL(url);
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+  }
 
-        {/* Navigation */}
-        <nav className="flex-1 p-2.5 space-y-1 overflow-y-auto">
-          {NAV.map(({ id, label, icon: Icon, desc }) => {
-            const active = activeTab === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-left transition-all group ${
-                  active
-                    ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-sm"
-                    : `text-slate-400 hover:text-slate-200 hover:${C.raised} border border-transparent`
-                }`}
-              >
-                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-cyan-400" : "text-slate-500 group-hover:text-slate-300"}`} />
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold leading-none truncate">{label}</p>
-                  <p className={`text-[10px] mt-0.5 truncate ${active ? "text-cyan-500/80" : "text-slate-600"}`}>{desc}</p>
-                </div>
-                {active && <ChevronRight className="w-3.5 h-3.5 ml-auto shrink-0 text-cyan-500/60" />}
-              </button>
-            );
-          })}
-        </nav>
+  const current = scans.find(s => s.id === selected);
+  const result: ScanResult | null = current?.result || null;
+  const findings = result?.findings || result?.detections || [];
+  const completed = scans.filter(s => s.status === 'completed');
+  const running = scans.filter(s => ['queued', 'running'].includes(s.status));
 
-        {/* Live metrics strip */}
-        <div className={`p-3 border-t ${C.border}`}>
-          <div className="flex items-center justify-between px-1 mb-2">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Live Telemetry</span>
-            <span className="text-[10px] font-mono text-cyan-400">NTRO Level 4</span>
-          </div>
-          <div className={`rounded-md ${C.raised} border ${C.border} divide-y divide-[var(--ecdat-border-subtle)]`}>
-            {[
-              { label: "Assets Indexed", val: overview?.kpis.total_findings,              cls: "text-slate-300" },
-              { label: "Critical Debt",  val: overview?.kpis.critical,                    cls: "text-red-400"   },
-              { label: "QV Certs",       val: overview?.kpis.quantum_vulnerable_certs,    cls: "text-amber-400" },
-              { label: "CAI Agility",    val: agilityResult ? `${agilityResult.cai_percentage}%` : "34%", cls: "text-emerald-400" },
-            ].map(({ label, val, cls }) => (
-              <div key={label} className="flex items-center justify-between px-3 py-1.5 text-[11px] font-mono">
-                <span className="text-slate-500">{label}</span>
-                <span className={`font-semibold ${cls}`}>{ovLoading ? "…" : (val ?? "—")}</span>
-              </div>
-            ))}
-          </div>
-          {lastScan && (
-            <p className="text-[10px] text-slate-600 font-mono mt-2 flex items-center gap-1.5 px-1">
-              <Activity className="w-3 h-3 text-emerald-400 animate-pulse" />
-              Engine synced {lastScan}
-            </p>
-          )}
-        </div>
-      </aside>
-
-      {/* ═════════════════ MAIN ═════════════════ */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-
-        {/* Topbar */}
-        <header className={`h-14 shrink-0 flex items-center justify-between px-6 border-b ${C.border} ${C.canvas} backdrop-blur-sm`}>
-          <div className="flex items-center gap-3">
-            {(() => {
-              const n = NAV.find(i => i.id === activeTab)!;
-              const Icon = n.icon;
-              return (
-                <>
-                  <Icon className="w-4 h-4 text-slate-400" />
-                  <div>
-                    <h1 className="text-sm font-semibold text-slate-100 leading-none">{n.label}</h1>
-                    <p className="text-[10px] text-slate-500 mt-0.5">{n.desc}</p>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            <Badge className="font-mono text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 gap-1.5 py-0.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
-              FULL CAPACITY · NTRO SIH26164
-            </Badge>
-            <Badge className="font-mono text-[10px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 py-0.5">
-              CycloneDX v1.6
-            </Badge>
-          </div>
-        </header>
-
-        {/* Scrollable content area */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="p-6">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeTab}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.12, ease: "easeOut" }}
-              >
-
-                {/* ══════════════════════════════════════════
-                    1. OVERVIEW & KNOWLEDGE GRAPH
-                    ══════════════════════════════════════════ */}
-                {activeTab === "overview" && (
-                  <div className="space-y-5">
-                    {/* KPIs */}
-                    {ovLoading ? (
-                      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                        {[0,1,2,3].map(i => (
-                          <Skeleton key={i} className={`h-28 ${C.raised} rounded-xl`} />
-                        ))}
-                      </div>
-                    ) : overview?.kpis && (
-                      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                        <KpiCard
-                          label="Total Assets Indexed" value={overview.kpis.total_findings}
-                          icon={Database}              accent="bg-cyan-500/10 text-cyan-400"
-                          sub="Network · Code · Binary artifacts"
-                        />
-                        <KpiCard
-                          label="Critical Vulnerabilities" value={overview.kpis.critical}
-                          valueClass="text-red-400"         icon={ShieldAlert}
-                          accent="bg-red-500/10 text-red-400"
-                          sub="Classical broken & zero-quantum"
-                        />
-                        <KpiCard
-                          label="Quantum-Vulnerable Certs" value={overview.kpis.quantum_vulnerable_certs}
-                          valueClass="text-amber-400"       icon={Lock}
-                          accent="bg-amber-500/10 text-amber-400"
-                          sub="RSA / ECDSA Shor exposure"
-                        />
-                        <KpiCard
-                          label="Est. Migration Effort"  value={overview.kpis.est_migration_effort}
-                          icon={TrendingUp}             accent="bg-emerald-500/10 text-emerald-400"
-                          sub="Derived via Mosca deficit"
-                        />
-                      </div>
-                    )}
-
-                    {/* Knowledge Graph Card */}
-                    <Card className={`${C.surface} ${C.border} overflow-hidden`}>
-                      <CardHeader className={`border-b ${C.border} py-4`}>
-                        <div className="flex items-center justify-between gap-4">
-                          <div>
-                            <CardTitle className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                              <Network className="w-4 h-4 text-cyan-400" />
-                              Cryptographic Knowledge Graph (Graph Topology & Blast Radius)
-                            </CardTitle>
-                            <CardDescription className="text-slate-500 text-xs mt-0.5">
-                              Dynamic directed dependency model (`App → Service → Protocol → Primitive → Cert`). Click any node to calculate blast radius impact.
-                            </CardDescription>
-                          </div>
-                          <div className="flex items-center gap-4 shrink-0">
-                            {[["Critical","#ef4444"],["High","#f59e0b"],["Medium","#facc15"],["Low","#10b981"]].map(([l, c]) => (
-                              <div key={l} className="flex items-center gap-1.5 text-[11px] text-slate-500 font-mono">
-                                <div className="w-2 h-2 rounded-full" style={{ background: c }} />
-                                {l}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <div ref={graphRef} className={`w-full h-[500px] ${C.canvas} relative`}>
-                        {overview?.graph ? (
-                          <ForceGraph2D
-                            graphData={overview.graph}
-                            width={graphW}
-                            height={500}
-                            backgroundColor="transparent"
-                            nodeRelSize={6}
-                            linkColor={() => "#1e293b"}
-                            linkWidth={1.5}
-                            linkDirectionalArrowLength={4}
-                            linkDirectionalArrowRelPos={1}
-                            onNodeClick={(n) => setSelectedNode(n as GraphNode)}
-                            nodeCanvasObject={(node: any, ctx, scale) => {
-                              if (!isFinite(node.x) || !isFinite(node.y)) return;
-                              const r = 7;
-                              const color = sevNodeColor(node.severity);
-                              // Soft radial glow
-                              const grad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, r * 2.5);
-                              grad.addColorStop(0, color + "44");
-                              grad.addColorStop(1, color + "00");
-                              ctx.beginPath();
-                              ctx.arc(node.x, node.y, r * 2.5, 0, Math.PI * 2);
-                              ctx.fillStyle = grad;
-                              ctx.fill();
-                              // Node circle
-                              ctx.beginPath();
-                              ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-                              ctx.fillStyle = color;
-                              ctx.fill();
-                              ctx.strokeStyle = "rgba(255,255,255,0.2)";
-                              ctx.lineWidth = 1;
-                              ctx.stroke();
-                              // Label text
-                              const fs = Math.max(9, 11 / scale);
-                              ctx.font = `500 ${fs}px Inter, sans-serif`;
-                              ctx.fillStyle = "#94a3b8";
-                              ctx.textAlign = "center";
-                              ctx.fillText(node.label ?? "", node.x, node.y + r + fs + 2);
-                            }}
-                          />
-                        ) : (
-                          <div className="flex flex-col items-center justify-center h-full gap-3">
-                            {ovLoading ? (
-                              <>
-                                <RefreshCcw className="w-5 h-5 text-slate-600 animate-spin" />
-                                <p className="text-sm text-slate-600">Synthesizing Cryptographic Knowledge Graph…</p>
-                              </>
-                            ) : (
-                              <>
-                                <Network className="w-8 h-8 text-slate-700" />
-                                <p className="text-sm text-slate-600">No graph data currently available.</p>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </Card>
-
-                    {/* Blast-radius dialog */}
-                    <Dialog open={!!selectedNode} onOpenChange={() => setSelectedNode(null)}>
-                      <DialogContent className={`${C.surface} ${C.border} text-slate-100 max-w-md`}>
-                        <DialogHeader>
-                          <div className="flex items-start justify-between gap-3">
-                            <DialogTitle className="font-mono text-base leading-tight">{selectedNode?.label}</DialogTitle>
-                            {selectedNode && (
-                              <Badge className={`${sevBadge(selectedNode.severity)} text-[10px] shrink-0 mt-0.5`}>
-                                {selectedNode.severity?.toUpperCase()}
-                              </Badge>
-                            )}
-                          </div>
-                          <DialogDescription className="text-slate-500 text-xs">
-                            Type: <span className="text-cyan-400 font-mono">{selectedNode?.group?.toUpperCase()}</span>
-                          </DialogDescription>
-                        </DialogHeader>
-                        {selectedNode && (
-                          <div className="space-y-3 pt-1">
-                            <Divider />
-                            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-medium">Computed Blast Radius (Upstream Impact)</p>
-                            {(selectedNode.blast_radius?.length ?? 0) > 0 ? (
-                              <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                                {selectedNode.blast_radius!.map((s, i) => (
-                                  <div key={i} className={`flex items-center gap-2.5 text-xs font-mono text-slate-300 px-3 py-2 rounded-md ${C.raised} border ${C.border}`}>
-                                    <div className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
-                                    {s}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-sm text-slate-500 italic">Leaf node — no upstream dependent systems found.</p>
-                            )}
-                          </div>
-                        )}
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                )}
-
-                {/* ══════════════════════════════════════════
-                    2. NETWORK PROBER (MULTI-FACTOR HNDL)
-                    ══════════════════════════════════════════ */}
-                {activeTab === "network" && (
-                  <div className="space-y-5">
-                    <Card className={`${C.surface} ${C.border}`}>
-                      <CardHeader className={`border-b ${C.border} py-4`}>
-                        <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-200">
-                          <Network className="w-4 h-4 text-cyan-400" />
-                          Dynamic TLS Endpoint & HNDL Risk Inspector
-                        </CardTitle>
-                        <CardDescription className="text-slate-500 text-xs">
-                          Conducts an active non-intrusive TLS handshake. Discovers protocol version, cipher suite, key exchange (KEX), X.509 certificate, and derives true Harvest Now, Decrypt Later (HNDL) exposure.
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="py-4">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <Popover open={netOpen} onOpenChange={setNetOpen}>
-                            <PopoverTrigger className={`flex items-center justify-between gap-2 min-w-[240px] px-3 py-2 rounded-md border ${C.border} ${C.raised} text-sm font-mono text-slate-300 hover:border-slate-500 transition-colors focus:outline-none focus:border-cyan-500/50`}>
-                              <span className="truncate">{netTarget || "Select target…"}</span>
-                              <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            </PopoverTrigger>
-                            <PopoverContent className={`w-[360px] p-0 ${C.surface} ${C.border}`}>
-                              <Command className="bg-transparent">
-                                <CommandInput
-                                  placeholder="Search or type domain..."
-                                  className={`text-sm text-slate-200 border-b ${C.border}`}
-                                  onValueChange={(v) => { if (v.length > 3 && v.includes(".")) setNetTarget(v); }}
-                                />
-                                <CommandList>
-                                  <CommandEmpty className="text-slate-500 text-sm p-4">Type any valid hostname...</CommandEmpty>
-                                  <CommandGroup heading="Curated Audit Endpoints">
-                                    {KNOWN_TARGETS.map(({ domain, note }) => (
-                                      <CommandItem
-                                        key={domain}
-                                        value={domain}
-                                        onSelect={(v) => { setNetTarget(v); setNetOpen(false); }}
-                                        className="flex items-center justify-between gap-2 py-2 cursor-pointer"
-                                      >
-                                        <span className="font-mono text-xs text-slate-200">{domain}</span>
-                                        <span className="text-[10px] text-slate-500 shrink-0">{note}</span>
-                                      </CommandItem>
-                                    ))}
-                                  </CommandGroup>
-                                </CommandList>
-                              </Command>
-                            </PopoverContent>
-                          </Popover>
-
-                          <Button
-                            onClick={runNetworkScan}
-                            disabled={netLoading || !netTarget}
-                            className="bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-sm shadow-none"
-                          >
-                            {netLoading ? (
-                              <><RefreshCcw className="w-3.5 h-3.5 mr-2 animate-spin" />Probing TLS Socket…</>
-                            ) : (
-                              <><Activity className="w-3.5 h-3.5 mr-2" />Probe Endpoint</>
-                            )}
-                          </Button>
-                        </div>
-
-                        {/* Error Alert */}
-                        {(netResult?.error || netResult?.status === "error") && (
-                          <Alert className="mt-4 bg-red-500/10 border-red-500/20 text-red-400">
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                            <AlertTitle className="text-xs font-semibold">Probe Failed</AlertTitle>
-                            <AlertDescription className="font-mono text-[11px] mt-1">
-                              {netResult.error ?? netResult.message ?? "Connection refused."}
-                            </AlertDescription>
-                          </Alert>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    {/* Results Grid */}
-                    {netResult && !netResult.error && netResult.status !== "error" && (
-                      <div className="space-y-4">
-                        {/* 4 Dimension Cards */}
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                          <Card className={`${C.surface} ${C.border}`}>
-                            <CardContent className="p-4 space-y-2">
-                              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold block">Protocol</span>
-                              <p className="text-xl font-bold font-mono text-slate-100">{netResult.protocol}</p>
-                              <p className="text-[11px] text-slate-500 font-mono truncate">{netResult.target} ({netResult.ip_address})</p>
-                            </CardContent>
-                          </Card>
-
-                          <Card className={`${C.surface} ${C.border}`}>
-                            <CardContent className="p-4 space-y-2">
-                              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold block">Bulk Cipher</span>
-                              <p className="text-base font-bold font-mono text-slate-100 truncate">{netResult.bulk_cipher || netResult.cipher_name}</p>
-                              <p className="text-[11px] text-cyan-400 font-mono truncate">{netResult.symmetric_security || `${netResult.secret_bits} bits`}</p>
-                            </CardContent>
-                          </Card>
-
-                          <Card className={`${C.surface} ${C.border}`}>
-                            <CardContent className="p-4 space-y-2">
-                              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold block">Key Exchange (KEX)</span>
-                              <p className="text-xs font-bold font-mono text-slate-100 leading-snug break-words">{netResult.key_exchange}</p>
-                              <p className="text-[11px]">
-                                {netResult.key_exchange?.includes("No Forward") ? (
-                                  <span className="text-red-400 font-semibold">No Forward Secrecy</span>
-                                ) : (
-                                  <span className="text-emerald-400">PFS Active</span>
-                                )}
-                              </p>
-                            </CardContent>
-                          </Card>
-
-                          <Card className={`${C.surface} ${C.border}`}>
-                            <CardContent className="p-4 space-y-2">
-                              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold block">PQC / Hybrid Status</span>
-                              <p className="text-xs font-bold font-mono text-slate-100 leading-snug">{netResult.pqc_status}</p>
-                              <p className="text-[11px]">
-                                {netResult.pqc_status?.includes("PQC-Hybrid") ? (
-                                  <span className="text-emerald-400">Quantum Resistant</span>
-                                ) : netResult.pqc_status?.includes("Zero") ? (
-                                  <span className="text-red-400">Zero Quantum Margin</span>
-                                ) : (
-                                  <span className="text-amber-400">PQC Migration Pending</span>
-                                )}
-                              </p>
-                            </CardContent>
-                          </Card>
-                        </div>
-
-                        {/* Certificate & Derived HNDL Exposure Row */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                          <Card className={`${C.surface} ${C.border}`}>
-                            <CardHeader className={`border-b ${C.border} py-3`}>
-                              <div className="flex items-center justify-between">
-                                <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                                  {netResult.certificate?.expired ? <XCircle className="w-3.5 h-3.5 text-red-400" /> : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
-                                  X.509 Certificate Parameters
-                                </CardTitle>
-                                <span className="font-mono text-xs text-slate-300">
-                                  {Math.max(0, netResult.certificate?.days_remaining ?? 0)} days remaining
-                                </span>
-                              </div>
-                            </CardHeader>
-                            <CardContent className="p-4 space-y-3">
-                              <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                                <div>
-                                  <span className="text-slate-500 block text-[10px] uppercase">Public Key</span>
-                                  <span className="text-slate-200 font-semibold">{netResult.certificate?.public_key || "RSA-2048"}</span>
-                                </div>
-                                <div>
-                                  <span className="text-slate-500 block text-[10px] uppercase">Signature Algorithm</span>
-                                  <span className="text-slate-200 truncate block">{netResult.certificate?.signature_algorithm || "SHA-256"}</span>
-                                </div>
-                              </div>
-                              <div className="pt-2 border-t border-[var(--ecdat-border-subtle)] text-[11px] font-mono text-slate-400 space-y-1">
-                                <p className="truncate"><span className="text-slate-600">Subject:</span> {netResult.certificate?.subject || "N/A"}</p>
-                                <p className="truncate"><span className="text-slate-600">Issuer:</span> {netResult.certificate?.issuer || "N/A"}</p>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card className={`${C.surface} ${C.border}`}>
-                            <CardHeader className={`border-b ${C.border} py-3 flex flex-row items-center justify-between`}>
-                              <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                                <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-                                Derived HNDL Exposure Engine
-                              </CardTitle>
-                              <Badge className={`${sevBadge(netResult.hndl_risk)} text-xs font-bold`}>
-                                {netResult.hndl_risk} RISK
-                              </Badge>
-                            </CardHeader>
-                            <CardContent className="p-4 space-y-2">
-                              <p className="text-xs text-slate-300 leading-relaxed">{netResult.hndl_rationale}</p>
-                            </CardContent>
-                          </Card>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* ══════════════════════════════════════════
-                    3. POLYGLOT CODE SCANNER
-                    ══════════════════════════════════════════ */}
-                {activeTab === "code" && (
-                  <div className="space-y-4">
-                    {/* Language Selector Bar */}
-                    <div className="flex items-center justify-between bg-[var(--ecdat-surface)] border border-[var(--ecdat-border-subtle)] p-2 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <FileCode2 className="w-4 h-4 text-cyan-400 ml-2" />
-                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Target Language:</span>
-                        <div className="flex gap-1.5 ml-2">
-                          {LANGUAGES.map((l) => (
-                            <button
-                              key={l.id}
-                              onClick={() => handleLanguageChange(l.id)}
-                              className={`px-3 py-1 text-xs font-mono rounded transition-colors ${
-                                selectedLang === l.id
-                                  ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 font-bold"
-                                  : "text-slate-400 hover:text-slate-200 hover:bg-[var(--ecdat-surface-raised)]"
-                              }`}
-                            >
-                              {l.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <Badge className="font-mono text-[10px] bg-slate-800 text-slate-300">
-                        {findings.length} findings detected
-                      </Badge>
-                    </div>
-
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
-                      {/* Source Editor */}
-                      <div className="space-y-3">
-                        <Card className={`${C.surface} ${C.border} overflow-hidden`}>
-                          <CardHeader className={`border-b ${C.border} py-3 px-4 flex flex-row items-center justify-between`}>
-                            <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                              <Terminal className="w-3.5 h-3.5 text-cyan-400" />
-                              Source Code Editor
-                            </CardTitle>
-                            <span className="text-[10px] font-mono text-slate-500">AST Sink Inspection</span>
-                          </CardHeader>
-                          <textarea
-                            value={sourceCode}
-                            onChange={(e) => setSourceCode(e.target.value)}
-                            spellCheck={false}
-                            rows={21}
-                            className={`w-full px-4 py-3 font-mono text-xs leading-relaxed ${C.canvas} text-slate-300 border-0 resize-none focus:outline-none focus:ring-0`}
-                          />
-                        </Card>
-                        <Button
-                          onClick={() => runCodeScan()}
-                          disabled={codeLoading}
-                          className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-sm shadow-none"
-                        >
-                          {codeLoading ? <><RefreshCcw className="w-3.5 h-3.5 mr-2 animate-spin" />Analyzing AST Graph…</> : <><Code className="w-3.5 h-3.5 mr-2" />Run Polyglot AST Scan</>}
-                        </Button>
-                      </div>
-
-                      {/* Findings Table & Drop-in Remediation */}
-                      <div className="space-y-4">
-                        <Card className={`${C.surface} ${C.border} overflow-hidden`}>
-                          <CardHeader className={`border-b ${C.border} py-3 px-4`}>
-                            <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                              Discovered Vulnerabilities ({findings.length})
-                            </CardTitle>
-                          </CardHeader>
-                          <div className="overflow-auto max-h-60">
-                            <Table>
-                              <TableHeader>
-                                <TableRow className={`border-b ${C.border}`}>
-                                  <TableHead className="text-[10px] text-slate-500 uppercase py-2 w-12">Line</TableHead>
-                                  <TableHead className="text-[10px] text-slate-500 uppercase py-2">Primitive</TableHead>
-                                  <TableHead className="text-[10px] text-slate-500 uppercase py-2">Severity</TableHead>
-                                  <TableHead className="text-[10px] text-slate-500 uppercase py-2">Category</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {findings.map((f, i) => (
-                                  <TableRow
-                                    key={i}
-                                    onClick={() => setSelFinding(f === selFinding ? null : f)}
-                                    className={`border-b ${C.border} cursor-pointer hover:${C.raised} ${selFinding === f ? `${C.raised} border-l-2 border-l-cyan-500` : ""}`}
-                                  >
-                                    <TableCell className="font-mono text-slate-500 text-xs py-2">{f.line}</TableCell>
-                                    <TableCell className="font-mono font-semibold text-slate-200 text-xs py-2">{f.primitive}</TableCell>
-                                    <TableCell className="py-2"><Badge className={`${sevBadge(f.severity)} text-[10px]`}>{f.severity}</Badge></TableCell>
-                                    <TableCell className="text-slate-500 text-[11px] py-2">{f.category}</TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </div>
-                        </Card>
-
-                        {/* Selected Finding Details */}
-                        {selFinding && (
-                          <Card className={`${C.surface} ${C.border}`}>
-                            <CardContent className="p-4 space-y-2 text-xs font-mono">
-                              <p className="text-slate-400"><span className="text-cyan-400 font-bold">{selFinding.primitive}:</span> {selFinding.issue}</p>
-                              <p className="text-emerald-400"><span className="text-slate-500">Remediation:</span> {selFinding.nist_recommendation}</p>
-                            </CardContent>
-                          </Card>
-                        )}
-
-                        {/* Remediation Patch Block */}
-                        {remediation && (
-                          <Card className={`${C.surface} ${C.border} overflow-hidden`}>
-                            <CardHeader className={`border-b ${C.border} py-2.5 px-4 ${C.raised}`}>
-                              <CardTitle className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-                                Drop-In Remediation Recipe ({selectedLang.toUpperCase()})
-                              </CardTitle>
-                            </CardHeader>
-                            <div className="overflow-x-auto bg-[#0d1117] p-3 max-h-72">
-                              <pre className="text-[11px] font-mono leading-relaxed text-slate-300">
-                                {remediation}
-                              </pre>
-                            </div>
-                          </Card>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* ══════════════════════════════════════════
-                    4. BINARY & FIRMWARE SCANNER (MODULE 10)
-                    ══════════════════════════════════════════ */}
-                {activeTab === "binary" && (
-                  <div className="space-y-5">
-                    <Card className={`${C.surface} ${C.border}`}>
-                      <CardHeader className={`border-b ${C.border} py-4`}>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-200">
-                              <Binary className="w-4 h-4 text-cyan-400" />
-                              Module 10: Binary & Firmware Cryptographic Constant / S-Box Scanner
-                            </CardTitle>
-                            <CardDescription className="text-slate-500 text-xs mt-0.5">
-                              Deconstructs compiled ELF/PE binaries, firmware images, and kernel modules. Detects compiled S-boxes (AES, DES), initial state constants (MD5, SHA), and hardcoded private keys.
-                            </CardDescription>
-                          </div>
-                          <Button
-                            onClick={() => runBinaryScan()}
-                            disabled={binaryLoading}
-                            className="bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-xs shadow-none"
-                          >
-                            {binaryLoading ? <RefreshCcw className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Cpu className="w-3.5 h-3.5 mr-2" />}
-                            Triage Synthetic Firmware (.elf)
-                          </Button>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="py-4">
-                        {binaryResult && (
-                          <div className="space-y-5">
-                            {/* Entropy & Metric Bar */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                              <Card className={`${C.raised} border ${C.border}`}>
-                                <CardContent className="p-3">
-                                  <span className="text-[10px] uppercase text-slate-500 font-semibold block">Shannon Entropy</span>
-                                  <p className="text-xl font-bold font-mono text-cyan-400 mt-1">{binaryResult.overall_entropy} <span className="text-xs text-slate-500">/ 8.0</span></p>
-                                  <p className="text-[10px] text-slate-500 mt-0.5">{binaryResult.entropy_category}</p>
-                                </CardContent>
-                              </Card>
-                              <Card className={`${C.raised} border ${C.border}`}>
-                                <CardContent className="p-3">
-                                  <span className="text-[10px] uppercase text-slate-500 font-semibold block">Compiled S-Boxes</span>
-                                  <p className="text-xl font-bold font-mono text-amber-400 mt-1">{binaryResult.total_detections}</p>
-                                  <p className="text-[10px] text-slate-500 mt-0.5">Lookup tables in .rodata</p>
-                                </CardContent>
-                              </Card>
-                              <Card className={`${C.raised} border ${C.border}`}>
-                                <CardContent className="p-3">
-                                  <span className="text-[10px] uppercase text-slate-500 font-semibold block">Critical Primitives</span>
-                                  <p className="text-xl font-bold font-mono text-red-400 mt-1">{binaryResult.critical_count}</p>
-                                  <p className="text-[10px] text-slate-500 mt-0.5">DES tables / Static keys</p>
-                                </CardContent>
-                              </Card>
-                              <Card className={`${C.raised} border ${C.border}`}>
-                                <CardContent className="p-3">
-                                  <span className="text-[10px] uppercase text-slate-500 font-semibold block">Binary Image Size</span>
-                                  <p className="text-xl font-bold font-mono text-slate-200 mt-1">{binaryResult.file_size_bytes} <span className="text-xs text-slate-500">bytes</span></p>
-                                  <p className="text-[10px] text-slate-500 mt-0.5">{binaryResult.file_name}</p>
-                                </CardContent>
-                              </Card>
-                            </div>
-
-                            {/* Detected S-Boxes Table */}
-                            <Card className={`${C.surface} ${C.border} overflow-hidden`}>
-                              <CardHeader className={`border-b ${C.border} py-3`}>
-                                <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                                  Cryptographic Constants Located in Memory
-                                </CardTitle>
-                              </CardHeader>
-                              <div className="overflow-auto">
-                                <Table>
-                                  <TableHeader>
-                                    <TableRow className={`border-b ${C.border}`}>
-                                      <TableHead className="text-[10px] text-slate-500 uppercase py-2">Offset</TableHead>
-                                      <TableHead className="text-[10px] text-slate-500 uppercase py-2">Primitive</TableHead>
-                                      <TableHead className="text-[10px] text-slate-500 uppercase py-2">Type</TableHead>
-                                      <TableHead className="text-[10px] text-slate-500 uppercase py-2">Severity</TableHead>
-                                      <TableHead className="text-[10px] text-slate-500 uppercase py-2">Quantum Impact</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {binaryResult.detections?.map((d: any, idx: number) => (
-                                      <TableRow key={idx} className={`border-b ${C.border} font-mono text-xs`}>
-                                        <TableCell className="text-cyan-400 font-bold">{d.offset}</TableCell>
-                                        <TableCell className="text-slate-200">{d.primitive}</TableCell>
-                                        <TableCell className="text-slate-400 text-[11px]">{d.type}</TableCell>
-                                        <TableCell><Badge className={`${sevBadge(d.severity)} text-[10px]`}>{d.severity}</Badge></TableCell>
-                                        <TableCell className="text-slate-400 text-[11px]">{d.quantum_impact}</TableCell>
-                                      </TableRow>
-                                    ))}
-                                  </TableBody>
-                                </Table>
-                              </div>
-                            </Card>
-
-                            {/* Hex & Byte Preview */}
-                            <Card className={`${C.surface} ${C.border}`}>
-                              <CardHeader className={`border-b ${C.border} py-2.5 px-4 ${C.raised}`}>
-                                <CardTitle className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-                                  Raw Image Hex Dump (First 256 Bytes)
-                                </CardTitle>
-                              </CardHeader>
-                              <div className="p-4 bg-[#0a0e17] overflow-x-auto">
-                                <code className="text-[10px] font-mono text-cyan-500/90 leading-relaxed block break-all">
-                                  {binaryResult.hex_preview}
-                                </code>
-                              </div>
-                            </Card>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  </div>
-                )}
-
-                {/* ══════════════════════════════════════════
-                    5. CRYPTO-AGILITY & MIGRATION ROADMAP
-                    ══════════════════════════════════════════ */}
-                {activeTab === "agility" && (
-                  <div className="space-y-5">
-                    {/* Top row: CAI Score & Posture */}
-                    {agilityResult && (
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                        <Card className={`${C.surface} ${C.border} lg:col-span-1`}>
-                          <CardHeader className="pb-2">
-                            <span className="text-[10px] uppercase text-slate-500 font-semibold tracking-widest">Cryptographic Agility Index (CAI)</span>
-                            <CardTitle className="text-4xl font-bold font-mono text-cyan-400 mt-2">
-                              {agilityResult.cai_score} <span className="text-sm font-normal text-slate-500">/ 1.00</span>
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-3">
-                            <Badge className={`${agilityResult.cai_score >= 0.8 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"} font-bold text-xs`}>
-                              {agilityResult.tier}
-                            </Badge>
-                            <p className="text-xs text-slate-300 leading-relaxed">{agilityResult.posture}</p>
-                            <Divider />
-                            <div className="flex justify-between text-xs font-mono text-slate-400">
-                              <span>Estimated Migration Span:</span>
-                              <span className="text-slate-200 font-bold">{agilityResult.migration_readiness_weeks} Weeks</span>
-                            </div>
-                          </CardContent>
-                        </Card>
-
-                        {/* 4 Pillars Breakdown */}
-                        <Card className={`${C.surface} ${C.border} lg:col-span-2`}>
-                          <CardHeader className={`border-b ${C.border} py-3`}>
-                            <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                              Four Architectural Pillars of Crypto-Agility
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="p-4 space-y-4">
-                            {agilityResult.pillars?.map((p: any, idx: number) => (
-                              <div key={idx} className="space-y-1.5">
-                                <div className="flex justify-between text-xs">
-                                  <span className="font-semibold text-slate-200">{p.name}</span>
-                                  <span className="font-mono text-cyan-400 font-bold">{p.score}%</span>
-                                </div>
-                                <div className={`w-full h-1.5 rounded-full ${C.raised} overflow-hidden`}>
-                                  <div
-                                    className={`h-full rounded-full ${p.score >= 70 ? "bg-emerald-500" : (p.score >= 40 ? "bg-amber-500" : "bg-red-500")}`}
-                                    style={{ width: `${p.score}%` }}
-                                  />
-                                </div>
-                                <p className="text-[11px] text-slate-500 font-mono">{p.recommendation}</p>
-                              </div>
-                            ))}
-                          </CardContent>
-                        </Card>
-                      </div>
-                    )}
-
-                    {/* Executive Migration Roadmap (Gantt-Style) */}
-                    {migrationRoadmap && (
-                      <Card className={`${C.surface} ${C.border}`}>
-                        <CardHeader className={`border-b ${C.border} py-4`}>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-200">
-                                <Calendar className="w-4 h-4 text-cyan-400" />
-                                Executive PQC Migration Roadmap & Implementation Schedule
-                              </CardTitle>
-                              <CardDescription className="text-slate-500 text-xs mt-0.5">
-                                Phased schedule targeting compliance with NSA CNSA 2.0, NIST FIPS 203/204/205, and India's National Quantum Mission (NQM).
-                              </CardDescription>
-                            </div>
-                            <div className="flex gap-2">
-                              <Badge className="font-mono text-xs bg-slate-800 text-slate-300">
-                                Effort: {migrationRoadmap.person_months} Person-Months
-                              </Badge>
-                              <Badge className="font-mono text-xs bg-cyan-950 text-cyan-400 border border-cyan-800">
-                                Est. Budget: {migrationRoadmap.estimated_budget}
-                              </Badge>
-                            </div>
-                          </div>
-                        </CardHeader>
-                        <CardContent className="p-5 space-y-5">
-                          {migrationRoadmap.phases?.map((ph: any, idx: number) => (
-                            <div key={idx} className={`p-4 rounded-lg ${C.raised} border ${C.border} space-y-3`}>
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-sm text-slate-200">{ph.phase}</span>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-mono text-cyan-400">{ph.timeline}</span>
-                                  <Badge className={`${urgencyBadge(ph.priority)} text-[10px]`}>{ph.priority}</Badge>
-                                </div>
-                              </div>
-                              <p className="text-xs text-slate-400"><span className="text-slate-500 uppercase font-semibold">Scope:</span> {ph.scope}</p>
-                              <ul className="space-y-1">
-                                {ph.action_items.map((act: string, aIdx: number) => (
-                                  <li key={aIdx} className="text-xs text-slate-300 flex items-start gap-2">
-                                    <Check className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
-                                    <span>{act}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                              <p className="text-xs text-emerald-400 font-mono pt-1"><span className="text-slate-500">Milestone:</span> {ph.milestone}</p>
-                            </div>
-                          ))}
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                )}
-
-                {/* ══════════════════════════════════════════
-                    6. CBOM & QUANTUM RISK (MOSCA & CYCLONEDX)
-                    ══════════════════════════════════════════ */}
-                {activeTab === "risk" && (
-                  <div className="space-y-5">
-                    {/* Mosca Sliders Row */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                      <Card className={`${C.surface} ${C.border}`}>
-                        <CardHeader className={`border-b ${C.border} py-3`}>
-                          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-200">
-                            <Zap className="w-4 h-4 text-amber-400" />
-                            Mosca's Theorem Urgency Calculator (X + Y &gt; Z)
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-4 space-y-5">
-                          {/* Live Equation Bar */}
-                          <div className={`${C.raised} border ${C.border} rounded-lg px-4 py-2.5 flex items-center gap-3 font-mono text-sm`}>
-                            <span className="text-cyan-400 font-bold">X: {x[0]}yr</span>
-                            <span className="text-slate-600">+</span>
-                            <span className="text-amber-400 font-bold">Y: {y[0]}yr</span>
-                            <span className="text-slate-600">=</span>
-                            <span className={`font-bold ${x[0]+y[0] > z[0] ? "text-red-400" : "text-emerald-400"}`}>{x[0]+y[0]}yr</span>
-                            <span className="text-slate-600 mx-1">{x[0]+y[0] > z[0] ? ">" : "≤"}</span>
-                            <span className="text-emerald-400 font-bold">Z: {z[0]}yr</span>
-                            <Badge className={`ml-auto text-[10px] ${x[0]+y[0] > z[0] ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>
-                              {x[0]+y[0] > z[0] ? "EXPOSED" : "SECURE"}
-                            </Badge>
-                          </div>
-
-                          {[
-                            { label: "X — Data Shelf Life",  desc: "Required confidentiality span",   val: x, set: setX, max: 30, color: "text-cyan-400"    },
-                            { label: "Y — Migration Time",   desc: "Duration to complete transition", val: y, set: setY, max: 15, color: "text-amber-400"   },
-                            { label: "Z — CRQC Horizon",     desc: "Estimated quantum arrival",       val: z, set: setZ, max: 20, color: "text-emerald-400" },
-                          ].map(({ label, desc, val, set, max, color }) => (
-                            <div key={label} className="space-y-1.5">
-                              <div className="flex items-center justify-between">
-                                <span className="text-xs font-medium text-slate-300">{label}</span>
-                                <span className={`text-base font-mono font-bold ${color}`}>{val[0]} yr</span>
-                              </div>
-                              <Slider value={val} onValueChange={(v) => set(Array.isArray(v) ? [...v] : [v as number])} max={max} step={1} />
-                            </div>
-                          ))}
-                          <Button onClick={runMosca} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white text-xs">
-                            Recalculate Mosca Deficit
-                          </Button>
-                        </CardContent>
-                      </Card>
-
-                      {/* Posture Alert & CBOM Export */}
-                      <div className="space-y-4">
-                        {mosca && (
-                          <Alert className={`border ${mosca.is_critical ? "bg-red-500/10 border-red-500/20 text-red-300" : "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"}`}>
-                            <ShieldAlert className="h-4 w-4" />
-                            <AlertTitle className="font-bold text-sm">{mosca.posture_status}</AlertTitle>
-                            <AlertDescription className="text-xs mt-1 leading-relaxed opacity-90">{mosca.explanation}</AlertDescription>
-                          </Alert>
-                        )}
-
-                        <Card className={`${C.surface} ${C.border}`}>
-                          <CardHeader className="py-3">
-                            <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                              <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
-                              CycloneDX v1.6 (ECMA-424) CBOM Generator
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-3">
-                            <p className="text-xs text-slate-400 leading-relaxed">
-                              Exports standard Cryptographic Bill of Materials (CBOM) capturing discovered network ciphers, code primitives, and compiled binary S-boxes.
-                            </p>
-                            <Button onClick={downloadCbom} variant="outline" className={`w-full text-xs ${C.canvas} ${C.border} text-slate-200`}>
-                              <Download className="w-3.5 h-3.5 mr-2" /> Download CycloneDX v1.6 CBOM JSON
-                            </Button>
-                          </CardContent>
-                        </Card>
-                      </div>
-                    </div>
-
-                    {/* NIST PQC Standards Mapping Table */}
-                    {mosca?.nist_mapping && (
-                      <Card className={`${C.surface} ${C.border} overflow-hidden`}>
-                        <CardHeader className={`border-b ${C.border} py-3`}>
-                          <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                            NIST Post-Quantum Cryptography (PQC) Transition Standards
-                          </CardTitle>
-                        </CardHeader>
-                        <div className="overflow-x-auto">
-                          <Table>
-                            <TableHeader>
-                              <TableRow className={`border-b ${C.border}`}>
-                                {["Category","Legacy Primitive","Threat","PQC Standard (NIST)","Security Levels","Urgency"].map(h => (
-                                  <TableHead key={h} className="text-[10px] text-slate-500 uppercase py-2.5 whitespace-nowrap">{h}</TableHead>
-                                ))}
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {mosca.nist_mapping.map((row, i) => (
-                                <TableRow key={i} className={`border-b ${C.border} text-xs`}>
-                                  <TableCell className="text-slate-300 font-medium whitespace-nowrap">{row.category}</TableCell>
-                                  <TableCell className="font-mono text-slate-400 whitespace-nowrap">{row.legacy_primitive}</TableCell>
-                                  <TableCell className="text-slate-400">{row.quantum_threat}</TableCell>
-                                  <TableCell className="font-mono text-cyan-400 font-semibold whitespace-nowrap">{row.pqc_standard}</TableCell>
-                                  <TableCell className="font-mono text-slate-400 text-[11px] whitespace-nowrap">{row.security_levels}</TableCell>
-                                  <TableCell><Badge className={`${urgencyBadge(row.urgency)} text-[10px]`}>{row.urgency}</Badge></TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      </Card>
-                    )}
-                  </div>
-                )}
-
-              </motion.div>
-            </AnimatePresence>
-          </div>
-        </div>
+  return <main className="min-h-screen bg-slate-950 text-slate-100">
+    <header className="border-b border-slate-800 px-6 py-5 lg:px-10 flex items-center justify-between gap-4">
+      <div className="flex items-center gap-3"><ShieldCheck className="text-cyan-300" size={30} /><div><h1 className="text-xl font-bold tracking-tight">ECDAT</h1><p className="text-xs text-slate-400">Cryptographic discovery & evidence</p></div></div>
+      <span className={`text-xs ${connected ? 'text-emerald-300' : 'text-amber-300'}`}>{connected ? 'Backend connected' : 'Backend unavailable'}</span>
+    </header>
+    <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10 space-y-7">
+      <div className="flex flex-wrap justify-between items-end gap-5"><div><p className="text-xs uppercase tracking-widest text-cyan-300 mb-2">Scan workspace</p><h2 className="text-3xl font-semibold">Know what your systems use.</h2><p className="mt-2 text-sm text-slate-400">Run measured scans, inspect coverage, and export selected evidence.</p></div>
+        <div className="flex gap-2 items-end"><label className="text-xs text-slate-400">Project<input aria-label="Project" className={inputClass} value={projectInput} onChange={e => setProjectInput(e.target.value)} /></label><button className={buttonClass} disabled={busy} onClick={() => { if (!/^[A-Za-z0-9_-]{1,64}$/.test(projectInput)) { setError('Use 1–64 letters, numbers, underscores or hyphens for project.'); return; } setProject(projectInput); setScans([]); setSelected(null); setExportIds([]); setError(''); }}>Open</button></div>
+      </div>
+      <details className="text-sm text-slate-400"><summary className="cursor-pointer">Backend access token</summary><input type="password" autoComplete="off" aria-label="Backend access token" placeholder="Required only when the backend has a token configured" className={`${inputClass} mt-3 max-w-xl`} value={token} onChange={e => { setToken(e.target.value); setError(''); }} /><p className="text-xs mt-2">Kept in memory for this page. Project names organize scans; access is shared by token.</p></details>
+      {error && <div role="alert" className="rounded-xl border border-red-800 bg-red-950/40 p-4 text-sm text-red-200 flex justify-between gap-4"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error">Dismiss</button></div>}
+      <div className="grid grid-cols-3 gap-4">{[['Completed scans', completed.length], ['Queued / running', running.length], ['Selected for export', exportIds.length]].map(([label, count]) => <div key={label} className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5"><p className="text-xs text-slate-400">{label}</p><p className="mt-2 text-2xl font-semibold">{count}</p></div>)}</div>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 sm:p-7">
+        <div className="flex flex-wrap gap-2 mb-6">{([{ id: 'network', label: 'Network / TLS', Icon: Globe }, { id: 'code', label: 'Source files', Icon: Code2 }, { id: 'binary', label: 'Binary / firmware', Icon: Binary }] as const).map(({ id, label, Icon }) => <button key={id} onClick={() => setMode(id)} aria-pressed={mode === id} className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm ${mode === id ? 'bg-cyan-300 text-slate-950' : 'bg-slate-800 text-slate-300'}`}><Icon size={16} />{label}</button>)}</div>
+        {mode === 'network' && <div className="space-y-3"><label className="text-sm">Hostname or URL<input className={`${inputClass} mt-2`} placeholder="example.org or https://example.org:8443" value={target} onChange={e => setTarget(e.target.value)} /></label><p className="text-xs text-slate-400">Checks a bounded set of TLS versions and ciphers plus certificate trust. PQC status stays unknown unless measured. Scan only authorized targets.</p></div>}
+        {mode === 'code' && <div className="space-y-4"><div className="flex flex-wrap gap-4 items-center"><select aria-label="Snippet language" className={`${inputClass} max-w-48`} value={language} onChange={e => setLanguage(e.target.value)}>{Object.keys(languageExtensions).map(lang => <option key={lang}>{lang}</option>)}</select><label className="text-sm text-slate-300">Source files<input type="file" multiple aria-label="Source files" className="block mt-2 text-xs" onChange={e => setSourceFiles(Array.from(e.target.files || []))} /></label><label className="text-sm text-slate-300">Source folder<input type="file" multiple {...{ webkitdirectory: '' }} aria-label="Source folder" className="block mt-2 text-xs" onChange={e => setSourceFiles(Array.from(e.target.files || []))} /></label></div>
+          {sourceFiles.length ? <p className="text-sm text-cyan-200">{sourceFiles.length} files selected. <button className="underline" onClick={() => setSourceFiles([])}>Use pasted code instead</button></p> : <textarea aria-label="Source code" rows={9} className={`${inputClass} font-mono`} placeholder="Paste source code here…" value={code} onChange={e => setCode(e.target.value)} />}
+          <p className="text-xs text-slate-400">Python AST with common aliases and constants; other languages use heuristic rules. Up to 100 files / 8 MiB. Unsupported files and parse errors appear in coverage.</p></div>}
+        {mode === 'binary' && <div className="rounded-xl border border-dashed border-slate-600 p-8"><label className="block text-sm">Choose a binary, firmware image, or ZIP<input type="file" aria-label="Binary file" className="block mt-4 text-sm" onChange={e => setBinary(e.target.files?.[0] || null)} /></label><p className="mt-4 text-xs text-slate-400">Maximum 8 MiB; ZIP expansion is limited to 100 entries / 8 MiB and one level. Signatures indicate presence, not execution.</p></div>}
+        <button className={`${buttonClass} mt-5`} disabled={busy || !connected} onClick={() => void submit()}>{busy ? 'Submitting…' : 'Start scan'}</button>
+      </section>
+      <div className="grid lg:grid-cols-[0.85fr_1.4fr] gap-6">
+        <section className="rounded-2xl border border-slate-800 p-5 min-w-0"><div className="flex items-center justify-between mb-4"><h3 className="font-semibold flex gap-2 items-center"><Activity size={18} />Scan history</h3><button aria-label="Refresh scans" onClick={() => void refresh()}><RefreshCw size={16} /></button></div>
+          <p className="text-xs text-slate-400 mb-4">Latest 200 scans in {project}. Select completed scans for export.</p>
+          {!scans.length && <p className="py-10 text-sm text-slate-500">No scans yet. Start with your own target or file.</p>}
+          <div className="space-y-2 max-h-[620px] overflow-y-auto">{scans.map(scan => <div key={scan.id} className={`rounded-xl border p-3 ${selected === scan.id ? 'border-cyan-500 bg-cyan-950/30' : 'border-slate-800'}`}><div className="flex gap-3 items-center"><input type="checkbox" aria-label={`Export scan ${scan.id}`} disabled={scan.status !== 'completed'} checked={exportIds.includes(scan.id)} onChange={e => setExportIds(ids => e.target.checked ? [...ids, scan.id] : ids.filter(id => id !== scan.id))} /><button className="text-left flex-1" onClick={() => setSelected(scan.id)}><span className="text-sm capitalize">{scan.kind} · {scan.id.slice(0, 8)}</span><span className="block text-xs text-slate-400 mt-1">{new Date(scan.created_at).toLocaleString()}</span></button><span className={`text-xs ${scan.status === 'failed' ? 'text-red-300' : 'text-cyan-200'}`}>{scan.status}</span></div>{['queued', 'running'].includes(scan.status) && <button className="mt-2 text-xs text-slate-400 underline" onClick={() => void cancel(scan.id)}>Cancel result collection</button>}</div>)}</div>
+          <button className={`${buttonClass} mt-5 flex items-center gap-2`} disabled={!exportIds.length} onClick={() => void download()}><Download size={16} />Export CBOM</button>
+        </section>
+        <section className="rounded-2xl border border-slate-800 p-5 min-w-0"><h3 className="font-semibold mb-4">Evidence & coverage</h3>
+          {!current ? <p className="text-sm text-slate-500 py-10">Select a scan to inspect its evidence.</p> : <div className="space-y-5"><p className="text-xs text-slate-400 break-all">Scan {current.id}<br />Engine {current.engine_version}<br />Input SHA-256: {current.input_hash}</p>
+            {current.error && <p role="alert" className="text-sm text-red-300">{current.error}</p>}
+            {current.status === 'cancelled' && <p className="text-sm text-slate-400">Result collection cancelled. An in-progress bounded operation may finish in the background.</p>}
+            {['running', 'queued'].includes(current.status) && <p role="status" className="text-sm text-cyan-300">{current.status === 'running' ? 'Analyzing your input…' : 'Waiting for a worker…'}</p>}
+            {result && <><p className="text-sm text-slate-300">{current.kind === 'network' ? `${result.target} · ${result.protocol} · ${result.cipher_name}` : `${findings.length} indicators found. Zero indicators does not establish cryptographic safety.`}</p>
+              {result.status === 'partial' && <p className="text-sm text-amber-300">Partial coverage: inspect skipped files and errors below.</p>}
+              {findings.map((finding, index) => <article key={index} className="rounded-xl bg-slate-900 p-4"><div className="flex justify-between gap-3"><h4 className="text-sm font-medium">{finding.primitive}</h4><span className="text-xs text-amber-200">{finding.severity}</span></div><p className="text-xs text-cyan-200 mt-2 break-all">{finding.file} {finding.line ? `: ${finding.line}` : finding.offset}</p><p className="text-sm text-slate-400 mt-2">{finding.issue || finding.description}</p><p className="text-xs text-slate-500 mt-2">Confidence: {finding.confidence || 'unassessed'} {finding.engine}</p></article>)}
+              <details open><summary className="text-sm text-slate-300 cursor-pointer">Coverage and measured details</summary><pre className="mt-3 p-4 rounded-xl bg-slate-900 text-xs text-slate-400 whitespace-pre-wrap break-all max-h-96 overflow-auto">{JSON.stringify({ coverage: result.coverage, certificate: result.certificate, pqc_status: result.pqc_status, protocol_tests: result.protocol_tests, cipher_tests: result.cipher_tests, dependencies: result.dependencies, members: result.members, limitations: result.limitations }, null, 2)}</pre></details>
+            </>}
+          </div>}
+        </section>
       </div>
     </div>
-  );
+  </main>;
 }
