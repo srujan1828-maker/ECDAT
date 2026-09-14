@@ -1,245 +1,250 @@
-from fastapi import FastAPI, APIRouter
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
-import asyncio
+from contextlib import asynccontextmanager
+import base64
 import os
-
+import re
+import secrets
+from typing import Literal
+from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, model_validator
+from engine.scan_store import ScanStore
+from engine.source_scan import scan_sources, LANGUAGES
+from engine.binary_deep import scan_upload, MAX_BYTES
 from engine.network_prober import probe_tls_endpoint
-from engine.ast_scanner import scan_code, generate_remediation_snippet
-from engine.polyglot_scanner import scan_polyglot_code, POLYGLOT_SAMPLES, POLYGLOT_REMEDIATIONS
-from engine.binary_scanner import scan_binary_data, generate_sample_binary_blob
+from engine.cbom_generator import generate_cyclonedx_cbom
 from engine.agility_engine import calculate_crypto_agility
 from engine.migration_simulator import simulate_pqc_migration_roadmap
 from engine.quantum_risk import calculate_mosca_risk
-from engine.cbom_generator import generate_cyclonedx_cbom
-from engine.demo_data import DEMO_NETWORK, DEMO_CODE
-from engine.knowledge_graph import kg
-
-app = FastAPI(
-    title="ECDAT API",
-    description="Enterprise Cryptographic Discovery & Analysis Tool — SIH26164 (NTRO)",
-    version="2.0.0",
-)
-
-# ── CORS Middleware Configuration ──────────────────────────────────────────────
-cors_env = os.getenv("CORS_ORIGINS", "*").strip()
-if not cors_env or cors_env == "*":
-    allowed_origins = ["*"]
-else:
-    allowed_origins = [orig.strip() for orig in cors_env.split(",") if orig.strip()]
-    for local in ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"]:
-        if local not in allowed_origins:
-            allowed_origins.append(local)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"] if "*" in allowed_origins else allowed_origins,
-    allow_origin_regex=r"https?://.*",
-    allow_credentials=False if "*" in allowed_origins else True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
-# ── Request Models ─────────────────────────────────────────────────────────────
-
-class NetworkScanRequest(BaseModel):
-    target: str
-    port: int = 443
-
-class CodeScanRequest(BaseModel):
-    source_code: str
-    language: str = "python"
-
-class BinaryScanRequest(BaseModel):
-    raw_hex: Optional[str] = None
-    file_name: Optional[str] = "firmware_telemetry.bin"
-
-class AgilityRequest(BaseModel):
-    hardcoded_primitives_count: int = 3
-    abstracted_primitives_count: int = 1
-    has_provider_abstraction: bool = False
-    has_pqc_hybrid_support: bool = False
-    automated_cert_rotation: bool = False
-    uses_config_driven_crypto: bool = True
-
-class MigrationSimRequest(BaseModel):
-    x_shelf_life: int = 10
-    y_migration_time: int = 4
-    z_crqc_horizon: int = 8
-    critical_findings_count: int = 3
-    qv_certs_count: int = 2
-
-class MoscaRequest(BaseModel):
-    x: int = 10
-    y: int = 4
-    z: int = 8
-
-class CBOMRequest(BaseModel):
-    code_findings: List[Dict[str, Any]] = []
-    network_findings: List[Dict[str, Any]] = []
-    binary_findings: List[Dict[str, Any]] = []
-    target_name: str = "ECDAT-Target"
+@asynccontextmanager
+async def lifespan(app):
+    app.state.store = ScanStore()
+    yield
+    app.state.store.close()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# API ROUTER (Available under both /api/* and /*)
-# ═══════════════════════════════════════════════════════════════════════════════
+app = FastAPI(title='ECDAT API', version='3.0.0', lifespan=lifespan)
+origins = [x.strip() for x in os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',') if x.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False,
+                   allow_methods=['GET', 'POST'], allow_headers=['Content-Type', 'Authorization'])
+
+
+@app.middleware('http')
+async def access_and_size(request: Request, call_next):
+    from fastapi.responses import JSONResponse
+    token = os.getenv('ECDAT_API_TOKEN', '')
+    if request.method != 'OPTIONS' and request.url.path not in ('/', '/health', '/api/health') and token:
+        if not secrets.compare_digest(request.headers.get('authorization', ''), 'Bearer ' + token):
+            return JSONResponse({'detail': 'Unauthorized'}, status_code=401)
+    # Bound both declared and streamed request bodies, before JSON/multipart parsing.
+    if request.method == 'POST':
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 18 * 1024 * 1024:
+                return JSONResponse({'detail': 'Request exceeds 18 MiB'}, status_code=413)
+        request._body = bytes(body)
+    return await call_next(request)
+
 
 router = APIRouter()
+Project = Query(default='default', min_length=1, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
 
-@router.post("/scan/network")
-async def scan_network(req: NetworkScanRequest):
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, probe_tls_endpoint, req.target, req.port, 3.0)
 
-    if result.get("status") != "error":
-        service_name = f"Service: {req.target}:{req.port}"
-        primitive    = f"Protocol: {result.get('protocol', 'Unknown')} / {result.get('bulk_cipher', result.get('cipher_name', 'Unknown'))}"
-        severity     = result.get("hndl_risk", "low").lower()
-        kg.add_finding(service_name, primitive, "Network Prober (Live TLS)", severity)
-        if result.get("certificate"):
-            cert_name  = f"Cert: {result['certificate'].get('subject', 'Unknown')} [{result['certificate'].get('public_key', 'RSA')}]"
-            is_expired = result["certificate"].get("expired", False)
-            kg.add_finding(service_name, cert_name, "Certificate Verification",
-                           "critical" if is_expired else "low")
+class NetworkRequest(BaseModel):
+    target: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=443, ge=1, le=65535)
 
+
+class SourceFile(BaseModel):
+    path: str = Field(min_length=1, max_length=300)
+    content: str = Field(max_length=500_000)
+    language: str | None = None
+
+    @model_validator(mode='after')
+    def valid_file(self):
+        if self.path.startswith('/') or '..' in self.path.replace('\\', '/').split('/'):
+            raise ValueError('Use a relative file path without parent traversal')
+        if self.language is not None and self.language not in LANGUAGES:
+            raise ValueError('Unsupported language')
+        return self
+
+
+class CodeRequest(BaseModel):
+    source_code: str = Field(min_length=1, max_length=500_000)
+    language: Literal['python', 'java', 'c_cpp', 'golang', 'javascript'] = 'python'
+
+
+class SourcesRequest(BaseModel):
+    files: list[SourceFile] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode='after')
+    def valid_total(self):
+        if sum(len(f.content.encode()) for f in self.files) > MAX_BYTES:
+            raise ValueError('Source bundle exceeds 8 MiB')
+        if len({f.path for f in self.files}) != len(self.files):
+            raise ValueError('Duplicate source paths')
+        return self
+
+
+class BinaryRequest(BaseModel):
+    raw_hex: str = Field(min_length=2, max_length=MAX_BYTES * 2)
+    file_name: str = Field(default='upload.bin', max_length=300)
+
+
+def enqueue(request, project, kind, payload, worker):
+    try:
+        return request.app.state.store.submit(project, kind, payload, worker)
+    except ValueError as exc:
+        raise HTTPException(429, str(exc)) from exc
+
+
+@router.get('/health')
+def health():
+    return {'status': 'ok', 'version': '3.0.0'}
+
+
+@router.post('/scan/network', status_code=202)
+def network(req: NetworkRequest, request: Request, project: str = Project):
+    return enqueue(request, project, 'network', req.model_dump(), lambda p: probe_tls_endpoint(p['target'], p['port']))
+
+
+@router.post('/scan/code', status_code=202)
+def code(req: CodeRequest, request: Request, project: str = Project):
+    files = [{'path': 'snippet.' + {'python': 'py', 'java': 'java', 'c_cpp': 'cpp', 'golang': 'go', 'javascript': 'js'}[req.language], 'content': req.source_code, 'language': req.language}]
+    return enqueue(request, project, 'code', {'files': files}, lambda p: scan_sources(p['files']))
+
+
+@router.post('/scan/sources', status_code=202)
+def sources(req: SourcesRequest, request: Request, project: str = Project):
+    return enqueue(request, project, 'code', req.model_dump(), lambda p: scan_sources(p['files']))
+
+
+def binary_worker(payload):
+    return scan_upload(base64.b64decode(payload['bytes']), payload['file_name'])
+
+
+@router.post('/scan/binary', status_code=202)
+def binary(req: BinaryRequest, request: Request, project: str = Project):
+    try:
+        raw = bytes.fromhex(req.raw_hex)
+        if not raw or len(raw) > MAX_BYTES:
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(422, 'Supply valid hex representing 1 byte to 8 MiB')
+    return enqueue(request, project, 'binary', {'bytes': base64.b64encode(raw).decode(), 'file_name': req.file_name}, binary_worker)
+
+
+@router.post('/scan/binary/upload', status_code=202)
+async def upload(request: Request, file: UploadFile = File(...), project: str = Project):
+    raw = await file.read(MAX_BYTES + 1)
+    await file.close()
+    if not raw or len(raw) > MAX_BYTES:
+        raise HTTPException(413, 'Upload must contain 1 byte to 8 MiB')
+    return enqueue(request, project, 'binary', {'bytes': base64.b64encode(raw).decode(), 'file_name': (file.filename or 'upload.bin')[:300]}, binary_worker)
+
+
+@router.get('/scans')
+def scans(request: Request, project: str = Project):
+    return request.app.state.store.list(project)
+
+
+@router.get('/scans/{scan_id}')
+def scan(scan_id: str, request: Request, project: str = Project):
+    result = request.app.state.store.get(scan_id, project)
+    if result is None:
+        raise HTTPException(404, 'Scan not found')
     return result
 
 
-@router.post("/scan/code")
-async def scan_code_endpoint(req: CodeScanRequest):
-    loop = asyncio.get_event_loop()
-    res = await loop.run_in_executor(None, scan_polyglot_code, req.source_code, req.language)
-
-    target_app = f"App: {req.language.upper()} Code Target"
-    for finding in res.get("findings", []):
-        primitive = f"Algo: {finding.get('primitive', 'Unknown')} ({req.language})"
-        severity  = finding.get("severity", "low").lower()
-        kg.add_finding(target_app, primitive, f"AST Scan (Line {finding.get('line')})", severity)
-
-    return res
+@router.post('/scans/{scan_id}/cancel')
+def cancel(scan_id: str, request: Request, project: str = Project):
+    result = request.app.state.store.cancel(scan_id, project)
+    if result is None:
+        raise HTTPException(404, 'Scan not found')
+    return result
 
 
-@router.get("/polyglot/samples")
-def get_polyglot_samples():
-    """Returns curated vulnerable samples for Python, Java, C/C++, Go, and JS."""
-    return POLYGLOT_SAMPLES
+@router.get('/overview')
+def overview(request: Request, project: str = Project):
+    records = [r for r in request.app.state.store.list(project) if r['status'] == 'completed']
+    nodes, links, findings = [], [], []
+    for record in records:
+        result = record['result']
+        evidence = result.get('findings', result.get('detections', []))
+        if record['kind'] == 'network':
+            evidence = [{'primitive': result['cipher_name'], 'severity': 'LOW'}]
+        nodes.append({'id': record['id'], 'label': record['kind'] + ' ' + record['id'][:8], 'group': 'service', 'severity': 'low', 'blast_radius': []})
+        for i, finding in enumerate(evidence):
+            node_id = record['id'] + ':' + str(i)
+            nodes.append({'id': node_id, 'label': finding['primitive'], 'group': 'algorithm', 'severity': finding.get('severity', 'LOW').lower(), 'blast_radius': [record['id']]})
+            links.append({'source': record['id'], 'target': node_id, 'label': finding.get('file', 'TLS observation')})
+            findings.append(finding)
+    return {'kpis': {'total_findings': len(findings), 'critical': sum(f.get('severity') == 'CRITICAL' for f in findings),
+                     'quantum_vulnerable_certs': 0, 'est_migration_effort': 'Not assessed'},
+            'graph': {'nodes': nodes, 'links': links}, 'scan_count': len(records),
+            'limitations': ['Quantum-vulnerable certificate count is not assessed. History limited to latest 200 scans.']}
 
 
-@router.post("/scan/binary")
-async def scan_binary_endpoint(req: BinaryScanRequest):
-    """
-    Module 10: Binary & Firmware Cryptographic Constant / S-Box Scanner.
-    Parses compiled hex dumps or synthetic firmware images.
-    """
-    if req.raw_hex and req.raw_hex.strip():
-        try:
-            cleaned_hex = req.raw_hex.replace("0x", "").replace(" ", "").replace("\n", "").replace("\r", "")
-            raw_bytes = bytes.fromhex(cleaned_hex)
-        except Exception:
-            raw_bytes = req.raw_hex.encode("utf-8")
-    else:
-        raw_bytes = generate_sample_binary_blob()
-
-    loop = asyncio.get_event_loop()
-    res = await loop.run_in_executor(None, scan_binary_data, raw_bytes, req.file_name or "firmware_telemetry.bin")
-
-    firmware_node = f"Firmware: {req.file_name or 'firmware_telemetry.bin'}"
-    for det in res.get("detections", []):
-        prim_node = f"Binary Primitive: {det.get('primitive')}"
-        sev = det.get("severity", "low").lower()
-        kg.add_finding(firmware_node, prim_node, f"Binary Offset {det.get('offset')}", sev)
-
-    return res
+class ExportRequest(BaseModel):
+    scan_ids: list[str] = Field(min_length=1, max_length=200)
+    target_name: str = Field(default='ECDAT Project', max_length=200)
 
 
-@router.post("/agility/evaluate")
-def evaluate_agility(req: AgilityRequest):
-    """Module 7: Cryptographic Agility Index (CAI) evaluation."""
-    return calculate_crypto_agility(
-        hardcoded_primitives_count=req.hardcoded_primitives_count,
-        abstracted_primitives_count=req.abstracted_primitives_count,
-        has_provider_abstraction=req.has_provider_abstraction,
-        has_pqc_hybrid_support=req.has_pqc_hybrid_support,
-        automated_cert_rotation=req.automated_cert_rotation,
-        uses_config_driven_crypto=req.uses_config_driven_crypto
-    )
+@router.post('/export/cbom')
+def export(req: ExportRequest, request: Request, project: str = Project):
+    records = []
+    for scan_id in dict.fromkeys(req.scan_ids):
+        record = request.app.state.store.get(scan_id, project)
+        if record is None or record['status'] != 'completed':
+            raise HTTPException(422, 'Export requires completed scans from this project')
+        records.append(record)
+    return generate_cyclonedx_cbom(records, req.target_name)
 
 
-@router.post("/migration/simulate")
-def simulate_migration(req: MigrationSimRequest):
-    """Simulates multi-phase PQC Migration Gantt timeline."""
-    return simulate_pqc_migration_roadmap(
-        x_shelf_life=req.x_shelf_life,
-        y_migration_time=req.y_migration_time,
-        z_crqc_horizon=req.z_crqc_horizon,
-        critical_findings_count=req.critical_findings_count,
-        qv_certs_count=req.qv_certs_count
-    )
+class AgilityRequest(BaseModel):
+    hardcoded_primitives_count: int = Field(default=0, ge=0)
+    abstracted_primitives_count: int = Field(default=0, ge=0)
+    has_provider_abstraction: bool = False
+    has_pqc_hybrid_support: bool = False
+    automated_cert_rotation: bool = False
+    uses_config_driven_crypto: bool = False
 
 
-@router.post("/risk/mosca")
-def evaluate_mosca(req: MoscaRequest):
+@router.post('/agility/evaluate')
+def agility(req: AgilityRequest):
+    return calculate_crypto_agility(**req.model_dump())
+
+
+class MigrationRequest(BaseModel):
+    x_shelf_life: int = Field(default=10, ge=0, le=100)
+    y_migration_time: int = Field(default=4, ge=0, le=100)
+    z_crqc_horizon: int = Field(default=8, ge=0, le=100)
+    critical_findings_count: int = Field(default=0, ge=0)
+    qv_certs_count: int = Field(default=0, ge=0)
+
+
+@router.post('/migration/simulate')
+def migration(req: MigrationRequest):
+    return simulate_pqc_migration_roadmap(**req.model_dump())
+
+
+class MoscaRequest(BaseModel):
+    x: int = Field(default=10, ge=0, le=100)
+    y: int = Field(default=4, ge=0, le=100)
+    z: int = Field(default=8, ge=0, le=100)
+
+
+@router.post('/risk/mosca')
+def mosca(req: MoscaRequest):
     return calculate_mosca_risk(req.x, req.y, req.z)
 
 
-@router.post("/export/cbom")
-def export_cbom(req: CBOMRequest):
-    all_code = req.code_findings.copy()
-    if req.binary_findings:
-        for b in req.binary_findings:
-            all_code.append({
-                "primitive": b.get("primitive", "Unknown"),
-                "category": b.get("type", "Binary Constant"),
-                "severity": b.get("severity", "MEDIUM"),
-                "line": b.get("offset", "0x00"),
-                "issue": b.get("description", "")
-            })
-    return generate_cyclonedx_cbom(all_code, req.network_findings, req.target_name)
+app.include_router(router, prefix='/api')
+app.include_router(router)
+app.add_api_route('/', health)
 
-
-@router.get("/demo/overview")
-def demo_overview():
-    """Live knowledge graph — continuously updated as scans execute."""
-    return {"kpis": kg.get_kpis(), "graph": kg.export_for_ui()}
-
-
-@router.post("/demo/network")
-def demo_network():
-    return DEMO_NETWORK
-
-
-@router.post("/demo/code")
-def demo_code():
-    return DEMO_CODE
-
-
-@router.post("/demo/mosca")
-def demo_mosca(req: MoscaRequest):
-    return calculate_mosca_risk(req.x, req.y, req.z)
-
-
-@router.post("/demo/cbom")
-def demo_cbom(req: Optional[CBOMRequest] = None):
-    findings = (req.code_findings if req else None) or DEMO_CODE["findings"]
-    network  = (req.network_findings if req else None) or [DEMO_NETWORK]
-    target   = (req.target_name if req else None) or "ECDAT-Demo-SIH26164"
-    return generate_cyclonedx_cbom(findings, network, target)
-
-
-# ── Mount router at BOTH /api and root / ────────────────────────────────────────
-app.include_router(router, prefix="/api")
-app.include_router(router, prefix="")
-
-@app.get("/")
-def root():
-    return {"status": "ok", "service": "ECDAT API", "version": "2.0.0"}
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    host = os.getenv("HOST", "0.0.0.0")
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run('main:app', host=os.getenv('HOST', '127.0.0.1'), port=int(os.getenv('PORT', '8000')))
