@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+from datetime import date
+from fastapi.encoders import jsonable_encoder
 import base64
 import os
 import re
@@ -10,7 +12,8 @@ from pydantic import BaseModel, Field, model_validator
 from engine.scan_store import ScanStore
 from engine.source_scan import scan_sources, LANGUAGES
 from engine.binary_deep import scan_upload, MAX_BYTES
-from engine.network_prober import probe_tls_endpoint
+from engine.website_inspector import scan_website
+from engine.migration_planner import build_plan
 from engine.cbom_generator import generate_cyclonedx_cbom
 from engine.agility_engine import calculate_crypto_agility
 from engine.migration_simulator import simulate_pqc_migration_roadmap
@@ -107,7 +110,7 @@ def health():
 
 @router.post('/scan/network', status_code=202)
 def network(req: NetworkRequest, request: Request, project: str = Project):
-    return enqueue(request, project, 'network', req.model_dump(), lambda p: probe_tls_endpoint(p['target'], p['port']))
+    return enqueue(request, project, 'network', req.model_dump(), lambda p: scan_website(p['target'], p['port']))
 
 
 @router.post('/scan/code', status_code=202)
@@ -228,6 +231,63 @@ class MigrationRequest(BaseModel):
 @router.post('/migration/simulate')
 def migration(req: MigrationRequest):
     return simulate_pqc_migration_roadmap(**req.model_dump())
+
+
+class TrafficInput(BaseModel):
+    source: str = Field(min_length=1, max_length=200)
+    start_date: date
+    end_date: date
+    total_requests: int = Field(ge=0, le=10**15)
+    total_gb: float | None = Field(default=None, ge=0, le=10**12, allow_inf_nan=False)
+
+    @model_validator(mode='after')
+    def valid_period(self):
+        if self.end_date < self.start_date or self.end_date > date.today():
+            raise ValueError('Use a completed, chronological observation period')
+        if (self.end_date - self.start_date).days > 366:
+            raise ValueError('Traffic period must be at most 367 days')
+        if not self.source.strip():
+            raise ValueError('Name the analytics source')
+        return self
+
+
+class WebsitePlanRequest(BaseModel):
+    scan_ids: list[str] = Field(min_length=1, max_length=100)
+    current_host: str | None = Field(default=None, max_length=200)
+    target_host: str | None = Field(default=None, max_length=200)
+    stack: str | None = Field(default=None, max_length=200)
+    database: Literal['unknown', 'none', 'postgresql', 'mysql', 'mongodb', 'other'] = 'unknown'
+    application_count: int = Field(default=1, ge=1, le=100)
+    data_gb: float | None = Field(default=None, ge=0, le=10**9, allow_inf_nan=False)
+    transfer_mbps: float | None = Field(default=None, gt=0, le=10**7, allow_inf_nan=False)
+    traffic: TrafficInput | None = None
+
+
+@router.post('/migration/plans', status_code=201)
+def create_website_plan(req: WebsitePlanRequest, request: Request, project: str = Project):
+    records = [request.app.state.store.get(i, project) for i in dict.fromkeys(req.scan_ids)]
+    if any(r is None or r['status'] != 'completed' for r in records):
+        raise HTTPException(422, 'Select completed scans from this project')
+    if sum(r['kind'] == 'network' for r in records) != 1:
+        raise HTTPException(422, 'Select exactly one website/network scan and any related source or binary scans')
+    inputs = req.model_dump(exclude={'scan_ids'})
+    for key in ('current_host', 'target_host', 'stack'):
+        inputs[key] = (inputs.get(key) or '').strip() or None
+    result = build_plan(records, inputs)
+    return request.app.state.store.save_plan(project, jsonable_encoder(result))
+
+
+@router.get('/migration/plans')
+def website_plans(request: Request, project: str = Project):
+    return request.app.state.store.list_plans(project)
+
+
+@router.get('/migration/plans/{plan_id}')
+def website_plan(plan_id: str, request: Request, project: str = Project):
+    result = request.app.state.store.get_plan(plan_id, project)
+    if result is None:
+        raise HTTPException(404, 'Plan not found')
+    return result
 
 
 class MoscaRequest(BaseModel):

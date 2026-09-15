@@ -24,6 +24,7 @@ class ScanStore:
                 id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL,
                 status TEXT NOT NULL, created_at TEXT NOT NULL, finished_at TEXT,
                 input_hash TEXT NOT NULL, payload TEXT, result TEXT, error TEXT)''')
+            db.execute('CREATE TABLE IF NOT EXISTS migration_plans (id TEXT PRIMARY KEY, project TEXT NOT NULL, created_at TEXT NOT NULL, result TEXT NOT NULL)')
             db.execute("UPDATE scans SET status='failed', error='Worker interrupted; submit again', finished_at=? WHERE status IN ('queued','running')", (now(),))
 
     def connect(self):
@@ -79,6 +80,23 @@ class ScanStore:
         with self.connect() as db:
             db.execute("UPDATE scans SET status='cancelled', finished_at=? WHERE id=? AND project=? AND status IN ('queued','running')", (now(), scan_id, project))
         return self.get(scan_id, project)
+
+    def save_plan(self, project, result):
+        value = dict(result, id=str(uuid.uuid4()), project=project)
+        with self.connect() as db:
+            db.execute('INSERT INTO migration_plans VALUES (?,?,?,?)',
+                       (value['id'], project, value['created_at'], json.dumps(value)))
+        return value
+
+    def get_plan(self, plan_id, project):
+        with self.connect() as db:
+            row = db.execute('SELECT result FROM migration_plans WHERE id=? AND project=?', (plan_id, project)).fetchone()
+        return json.loads(row['result']) if row else None
+
+    def list_plans(self, project):
+        with self.connect() as db:
+            rows = db.execute('SELECT id, created_at, result FROM migration_plans WHERE project=? ORDER BY created_at DESC LIMIT 100', (project,)).fetchall()
+        return [{'id': r['id'], 'created_at': r['created_at'], 'target': json.loads(r['result'])['target']} for r in rows]
 
     def close(self):
         self.pool.shutdown(wait=True)

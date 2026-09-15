@@ -1,8 +1,9 @@
 import httpx, subprocess, os, sys, tempfile, time, json
 from pathlib import Path
+from tls_fixture import https_fixture
 root=Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory() as temp:
-    env=dict(os.environ, ECDAT_DB=temp+'/scans.db', ECDAT_API_TOKEN='integration-token', BACKEND_API_URL='http://127.0.0.1:18000/api')
+with tempfile.TemporaryDirectory() as temp, https_fixture(temp) as tls_port:
+    env=dict(os.environ, ECDAT_DB=temp+'/scans.db', ECDAT_API_TOKEN='integration-token', ECDAT_ALLOWED_CIDRS='127.0.0.0/8', BACKEND_API_URL='http://127.0.0.1:18000/api')
     logs=open(temp+'/servers.log','w+')
     backend=subprocess.Popen([sys.executable,'-m','uvicorn','main:app','--host','127.0.0.1','--port','18000'],cwd=root/'backend',env=env,stdout=logs,stderr=logs)
     frontend=subprocess.Popen(['npm','run','start','--','--hostname','127.0.0.1','--port','13000'],cwd=root/'frontend',env=env,stdout=logs,stderr=logs)
@@ -15,6 +16,7 @@ with tempfile.TemporaryDirectory() as temp:
                 time.sleep(.1)
             else: raise AssertionError('Services did not start')
             assert c.get('/').status_code==200
+            assert c.get('/dashboard').status_code==200
             assert c.get('/api/scans').status_code==401
             c.headers['Authorization']='Bearer integration-token'
             assert c.get('/api/scans').json()==[]
@@ -35,11 +37,29 @@ with tempfile.TemporaryDirectory() as temp:
                 if binary['status'] not in ('queued','running'): break
                 time.sleep(.05)
             assert binary['status']=='completed',binary
-            exported=c.post('/api/export/cbom',json={'scan_ids':[scan['id'],binary['id']]})
+            response=c.post('/api/scan/network',json={'target':f'https://127.0.0.1:{tls_port}'})
+            assert response.status_code==202,response.text
+            network=response.json()
+            for _ in range(200):
+                network=c.get('/api/scans/'+network['id']).json()
+                if network['status'] not in ('queued','running'): break
+                time.sleep(.05)
+            assert network['status']=='completed',network
+            assert network['result']['deployment']['status_code']==200
+            assert network['result']['deployment']['hosting_hints'][0]['confidence']=='inferred'
+            response=c.post('/api/migration/plans',json={'scan_ids':[network['id'],scan['id'],binary['id']], 'database':'none'})
+            assert response.status_code==201,response.text
+            plan=response.json()
+            assert plan['traffic']['average_daily_requests'] is None
+            assert plan['estimate']['downtime_minutes'] is None
+            assert c.get('/api/migration/plans/'+plan['id']).json()==plan
+            assert c.get('/api/migration/plans/'+plan['id']+'?project=other').status_code==404
+            assert c.get('/api/migration/plans').json()[0]['id']==plan['id']
+            exported=c.post('/api/export/cbom',json={'scan_ids':[scan['id'],binary['id'],network['id']]})
             assert exported.status_code==200,exported.text
-            assert len(exported.json()['components'])==2
+            assert len(exported.json()['components'])==4
             assert c.post('/api/scan/binary',json={'raw_hex':'bad-hex'}).status_code==422
-            print('PASS: production Next.js proxy → authenticated FastAPI → source/binary jobs → persisted history → CBOM export; invalid input remains 422')
+            print('PASS: production Next.js proxy → authenticated FastAPI → source/binary/TLS+HTTP jobs → persisted history → CBOM export → saved migration plan; invalid input remains 422')
     except Exception:
         logs.flush(); logs.seek(0); print(logs.read()); raise
     finally:
