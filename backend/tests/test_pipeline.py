@@ -173,8 +173,10 @@ def tls_server(tmp_path, monkeypatch):
                 continue
             conn.settimeout(.5)
             try:
-                with context.wrap_socket(conn, server_side=True):
-                    pass
+                with context.wrap_socket(conn, server_side=True) as secure:
+                    data = secure.recv(4096)
+                    if data.startswith(b'HEAD / HTTP/1.1'):
+                        secure.sendall(b'HTTP/1.1 302 Found\r\nServer: fixture\r\nCF-Ray: fixture-ray\r\nLocation: https://127.0.0.2/private\r\nSet-Cookie: secret=redacted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
             except OSError:
                 conn.close()
     thread = threading.Thread(target=serve); thread.start()
@@ -272,3 +274,73 @@ def test_real_private_key_and_marker_confidence():
     assert 'MII' not in result['detections'][0]['description']
     fake = scan_upload(b'-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----', 'marker.bin')
     assert fake['detections'][0]['confidence'] == 'LOW'
+
+
+def test_deployment_and_migration_pipeline(client, tls_server):
+    site = finish(client, client.post('/api/scan/network?project=website', json={'target': f'https://127.0.0.1:{tls_server}/ignored'}), 'website')
+    assert site['status'] == 'completed', site
+    deployment = site['result']['deployment']
+    assert deployment['status'] == 'observed'
+    assert deployment['status_code'] == 302
+    assert deployment['headers']['location'] == 'https://127.0.0.2/private'
+    assert 'set-cookie' not in deployment['headers']
+    assert deployment['hosting_hints'][0]['confidence'] == 'inferred'
+    assert deployment['origin_provider'] is None
+    source = finish(client, client.post('/api/scan/code?project=website', json={'source_code': 'import hashlib\nhashlib.md5(b"x")'}), 'website')
+    response = client.post('/api/migration/plans?project=website', json={'scan_ids': [site['id'], source['id']], 'target_host': 'A new VPS', 'database': 'postgresql', 'data_gb': 90, 'transfer_mbps': 100,
+        'traffic': {'source': 'Access log totals', 'start_date': '2025-01-01', 'end_date': '2025-01-10', 'total_requests': 1000, 'total_gb': 20}})
+    assert response.status_code == 201, response.text
+    plan = response.json()
+    assert plan['traffic']['average_daily_requests'] == 100
+    assert plan['traffic']['average_daily_gb'] == 2
+    assert plan['estimate']['minimum_transfer_hours'] == 2
+    assert plan['estimate']['downtime_minutes'] is None
+    assert plan['evidence']['linked_findings'] == 1
+    assert any('certificate trust' in p['title'] for p in plan['priorities'])
+    assert {p['track'] for p in plan['phases']} == {'hosting', 'cryptography', 'shared'}
+    assert client.get('/api/migration/plans?project=website').json()[0]['id'] == plan['id']
+    assert client.get(f"/api/migration/plans/{plan['id']}?project=website").json() == plan
+    assert client.get(f"/api/migration/plans/{plan['id']}").status_code == 404
+    assert client.post('/api/migration/plans', json={'scan_ids': [site['id']]}).status_code == 422
+    assert client.post('/api/migration/plans?project=website', json={'scan_ids': [source['id']]}).status_code == 422
+    draft = client.post('/api/migration/plans?project=website', json={'scan_ids': [site['id']]}).json()
+    assert draft['traffic']['status'] == 'unknown'
+    assert draft['traffic']['average_daily_requests'] is None
+    assert draft['estimate']['minimum_transfer_hours'] is None
+    assert 'Traffic baseline' in draft['missing_inputs']
+
+
+def test_plan_validation(client):
+    base = {'scan_ids': ['missing'], 'traffic': {'source': 'logs', 'start_date': '2025-02-02', 'end_date': '2025-01-01', 'total_requests': 2}}
+    assert client.post('/api/migration/plans', json=base).status_code == 422
+    assert client.post('/api/migration/plans', json={'scan_ids': ['missing'], 'transfer_mbps': 0}).status_code == 422
+    assert client.post('/api/migration/plans', json={'scan_ids': ['missing'], 'application_count': 0}).status_code == 422
+    assert client.post('/api/migration/plans', json={'scan_ids': []}).status_code == 422
+
+
+def test_http_header_bound_and_no_redirect_requests(monkeypatch):
+    from engine.website_inspector import inspect_http
+    calls = []
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def sendall(self, data): calls.append(data)
+        def settimeout(self, value): pass
+        def recv(self, size): return b'x' * size
+    monkeypatch.setattr('engine.website_inspector._handshake', lambda *args: Connection())
+    result = inspect_http('example.org', 443, (socket.AF_INET, ('1.1.1.1', 443)))
+    assert result['status'] == 'unavailable'
+    assert '16 KiB' in result['error']
+    assert len(calls) == 1
+    assert calls[0].startswith(b'HEAD / HTTP/1.1')
+
+
+def test_plans_survive_restart(tmp_path):
+    path = str(tmp_path / 'plans.db')
+    store = ScanStore(path)
+    plan = store.save_plan('a', {'target': 'example.org', 'created_at': '2025-01-01', 'traffic': {'status': 'unknown'}})
+    store.close()
+    restarted = ScanStore(path)
+    assert restarted.get_plan(plan['id'], 'a') == plan
+    assert restarted.list_plans('b') == []
+    restarted.close()

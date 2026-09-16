@@ -65,3 +65,29 @@ python scripts/check_stack.py
 Backend tests cover actual loopback TLS handshakes against an expired self-signed certificate, job-to-export workflows, Python aliases/constants, all supported language rule paths, actual binary uploads, ELF/PE sections, ZIP limits, cancellation, persistence, authentication, CORS, project partitioning, and CBOM schema validation. External network targets and provider deployments are not exercised by these tests.
 
 The vendored `backend/tests/bom-1.6.schema.json` comes from https://github.com/CycloneDX/specification/blob/1.6/schema/bom-1.6.schema.json and retains its upstream license metadata.
+
+## Discovery dashboard and migration planner
+
+The root page introduces the platform; **Open dashboard** goes to `/dashboard`. The workspace includes a command center with real scan charts, starting tips, all three existing scan workflows, reports, and a migration planner. Dark/light mode applies throughout and remembers the browser preference. Deep links `/dashboard#network`, `#code`, `#binary`, and `#migration` open the corresponding workflow.
+
+Network scans now make one HTTPS `HEAD /` request to the exact IP vetted during TLS collection. Headers are capped at 16 KiB with a three-second read deadline. Redirects are recorded but never followed. Only a small header allowlist is retained; cookies are not saved. An HTTP failure leaves successful TLS evidence intact. Cloudflare/Vercel/CloudFront header hints are explicitly inferred: they can be spoofed and do not prove the origin provider, physical region, deployment method, or traffic volume. Old scans without HTTP evidence remain usable; rescan to collect it.
+
+To create a plan:
+
+1. Complete one website/network scan, then open **Migration planner**.
+2. Select that scan and any source/binary scans you confirm belong to the website.
+3. Optionally supply current/target hosting, application stack, database, application count, data size and measured transfer throughput.
+4. If available, enter analytics request/bandwidth totals and a dated observation period. Daily averages use inclusive calendar days; request totals are not unique visitors or peak load. No traffic is fabricated when these inputs are missing.
+5. Build and review the saved draft. It includes hosting and cryptographic workstreams, evidence-linked priorities, missing inputs, validation and rollback steps. Download the full JSON or reopen a saved plan.
+
+`POST /api/migration/plans?project=...` accepts the fields above and `scan_ids` (exactly one completed network scan, with optional completed source/binary scans from the same project). It returns **201** with a saved plan. `GET /api/migration/plans` lists the latest 100 plan summaries, and `GET /api/migration/plans/{id}` retrieves one. Shared-token access and project partitioning work as for scans. Plans are stored in the existing SQLite database and survive restarts.
+
+Effort ranges are transparent ECDAT planning heuristics for one engineer, **not measured delivery dates**. The response exports the formula and assumptions. Transfer time is a theoretical minimum from supplied decimal GB and Mbps. Downtime is unknown until rehearsed. No infrastructure changes, credential collection, production migration, or claim of PQC readiness is performed. The old `/migration/simulate` endpoint remains for compatibility; the new UI uses `/migration/plans`.
+
+The migration guidance links to [NIST NCCoE's migration project](https://www.nccoe.nist.gov/applied-cryptography/migration-to-pqc). Traffic inputs can come from owner-controlled logs or services such as [Cloudflare zone analytics](https://developers.cloudflare.com/analytics/account-and-zone-analytics/zone-analytics/).
+
+### Design handoff
+
+[Figma — ECDAT Discovery & Migration](https://www.figma.com/design/OakWmlX58LfFxdPff7UV46) contains editable Dark/Light foundations, Geist typography, reusable button/card variants, and the landing navigation/hero. Separate theme collections accommodate the Starter plan's one-mode limit. **Figma's MCP quota was exhausted before the remaining screen designs and final visual review could be completed.** The dashboard and migration frames in that file are unfinished; the full UI is implemented in this repository.
+
+New UI modules live in `frontend/src/components/ecdat`; shared theme/layout styles are in `frontend/src/app/globals.css`. The scan workflow remains in `frontend/src/app/dashboard/page.tsx`. Validation covers TypeScript, the production frontend build, and the authenticated production proxy-to-backend workflow. Browser visual/interactivity review remains a follow-up because the available browser cannot access the local application in this environment.
