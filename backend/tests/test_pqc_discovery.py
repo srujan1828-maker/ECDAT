@@ -147,3 +147,11 @@ def test_html_sampler_no_redirect_and_no_execution(monkeypatch):
     monkeypatch.setattr('engine.website_inspector._handshake',lambda *a:conn)
     assert inspect_html('test.example',443,(socket.AF_INET,('1.1.1.1',443)))['status']=='skipped'
     assert len(conn.requests)==1
+
+
+@pytest.mark.parametrize('label', ['Server Temp Key', 'Peer Temp Key'])
+def test_classical_summary_across_openssl_versions(monkeypatch, label):
+    summary = f'CONNECTION ESTABLISHED\nProtocol version: TLSv1.3\nCiphersuite: TLS_AES_256_GCM_SHA384\n{label}: X25519, 253 bits\n'
+    monkeypatch.setattr(pqc_probe, 'run_bounded', lambda *args: {'text': summary, 'reason': None})
+    assert pqc_probe.probe_group('openssl', 'localhost', '127.0.0.1', 443, 'X25519')['status'] == 'negotiated'
+    assert not pqc_probe.handshake_evidence(summary.rstrip('\n'))

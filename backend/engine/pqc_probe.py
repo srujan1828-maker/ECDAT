@@ -57,7 +57,7 @@ def handshake_evidence(text):
     return bool(re.search(r'^CONNECTION ESTABLISHED\s*$', text, re.M)
                 and re.search(r'^Protocol version: TLSv1\.3\s*$', text, re.M)
                 and re.search(r'^Ciphersuite: TLS_[A-Z0-9_]+\s*$', text, re.M)
-                and re.search(r'^(?:Negotiated TLS1\.3 group|Server Temp Key): [^\r\n]+\r?\n', text, re.M))
+                and re.search(r'^(?:Negotiated TLS1\.3 group|Server Temp Key|Peer Temp Key): [^\r\n]+\r?\n', text, re.M))
 
 
 def probe_group(binary, host, ip, port, group, timeout=3.0):
@@ -72,7 +72,7 @@ def probe_group(binary, host, ip, port, group, timeout=3.0):
     if response['reason'] == 'output_limit':
         return {'group': group, 'status': 'inconclusive', 'reason': 'Diagnostic output limit exceeded'}
     if handshake_evidence(text):
-        selected = re.search(r'^(?:Negotiated TLS1\.3 group|Server Temp Key): ([^,\r\n]+)', text, re.M).group(1).strip()
+        selected = re.search(r'^(?:Negotiated TLS1\.3 group|Server Temp Key|Peer Temp Key): ([^,\r\n]+)', text, re.M).group(1).strip()
         aliases = {'prime256v1': 'P-256', 'secp256r1': 'P-256', 'X25519': 'X25519'}
         if aliases.get(selected, selected) != aliases.get(group, group):
             return {'group': group, 'status': 'inconclusive', 'reason': 'Unexpected negotiated group in diagnostic output'}
