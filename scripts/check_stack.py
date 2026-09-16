@@ -45,11 +45,15 @@ with tempfile.TemporaryDirectory() as temp, https_fixture(temp) as tls_port:
                 if network['status'] not in ('queued','running'): break
                 time.sleep(.05)
             assert network['status']=='completed',network
+            assert network['result']['post_quantum']['tests'][-1]['group']=='X25519'
+            assert 'environment' in network['result']['deployment']
             assert network['result']['deployment']['status_code']==200
             assert network['result']['deployment']['hosting_hints'][0]['confidence']=='inferred'
             response=c.post('/api/migration/plans',json={'scan_ids':[network['id'],scan['id'],binary['id']], 'database':'none'})
             assert response.status_code==201,response.text
             plan=response.json()
+            assert plan['environment']['signals']
+            assert any('MLKEM' in row['target'] for row in plan['cryptographic_migration']['upgrades'])
             assert plan['traffic']['average_daily_requests'] is None
             assert plan['estimate']['downtime_minutes'] is None
             assert c.get('/api/migration/plans/'+plan['id']).json()==plan

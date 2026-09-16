@@ -1,5 +1,24 @@
+import type { EnvironmentEvidence, PQEvidence } from "./api";
 export type PlanSummary = { id: string; created_at: string; target: string };
 export type MigrationPlan = PlanSummary & {
+  environment?: EnvironmentEvidence;
+  input_sources?: Record<string, string>;
+  cryptographic_migration?: {
+    scope: string;
+    tls_key_exchange: PQEvidence;
+    upgrades: {
+      current: string;
+      role: string;
+      target: string;
+      reason: string;
+      evidence: string;
+      action: string;
+      validation: string;
+      reference?: string;
+    }[];
+    limitations: string[];
+    references: { title: string; url: string }[];
+  };
   status: string;
   scan_ids: string[];
   missing_inputs: string[];

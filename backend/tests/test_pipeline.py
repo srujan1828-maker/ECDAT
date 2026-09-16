@@ -39,7 +39,7 @@ def client(tmp_path, monkeypatch):
 def finish(client, response, project='default'):
     assert response.status_code == 202, response.text
     scan_id = response.json()['id']
-    for _ in range(200):
+    for _ in range(1000):
         record = client.get(f'/api/scans/{scan_id}?project={project}').json()
         if record['status'] not in ('queued', 'running'):
             return record
@@ -191,7 +191,9 @@ def test_tls_job_to_export(client, tls_server):
     result = record['result']
     assert result['certificate']['expired'] is True
     assert result['certificate']['trust_validated'] is False
-    assert result['pqc_status'] == 'Unknown / not measured'
+    assert result['post_quantum']['status'] in ('scanner_unavailable', 'tested_not_negotiated', 'hybrid_supported', 'inconclusive')
+    assert result['post_quantum']['tests'][-1]['group'] == 'X25519'
+    assert result['post_quantum']['tests'][-1]['status'] == 'negotiated'
     assert any(t['status'] == 'supported' for t in result['protocol_tests'])
     assert len(result['cipher_tests']) == 4
     cbom = client.post('/api/export/cbom', json={'scan_ids': [record['id']]}).json()
