@@ -13,6 +13,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { requestApi, Scan } from "@/lib/api";
+import { EnvironmentEvidence, PostQuantumEvidence } from "./evidence-panels";
 import { MigrationPlan, PlanSummary } from "@/lib/migration";
 export function MigrationPlanner({
   scans,
@@ -311,82 +312,95 @@ export function MigrationPlanner({
                 </details>
               )}
               <div className="form-divider">
-                <h3>2. Describe the environment</h3>
+                <h3>2. Review the discovered environment</h3>
                 <p>
-                  Optional details improve the draft. Leave unknown values
-                  blank.
+                  Detection runs automatically. You only need to add details
+                  that public evidence cannot establish.
                 </p>
               </div>
-              <div className="form-grid">
-                <label>
-                  Current hosting
-                  <input
-                    {...field("current_host")}
-                    placeholder="e.g. AWS, a VPS, shared hosting"
-                    maxLength={200}
-                  />
-                </label>
-                <label>
-                  Target hosting
-                  <input
-                    {...field("target_host")}
-                    placeholder="Where do you want to move?"
-                    maxLength={200}
-                  />
-                </label>
-                <label>
-                  Application stack
-                  <input
-                    {...field("stack")}
-                    placeholder="e.g. Next.js + FastAPI"
-                    maxLength={200}
-                  />
-                </label>
-                <label>
-                  Database
-                  <select {...field("database")}>
-                    <option value="unknown">Not yet known</option>
-                    <option value="none">No database / stateless</option>
-                    <option value="postgresql">PostgreSQL</option>
-                    <option value="mysql">MySQL</option>
-                    <option value="mongodb">MongoDB</option>
-                    <option value="other">Other database</option>
-                  </select>
-                </label>
-                <label>
-                  Applications
-                  <input
-                    {...field("application_count")}
-                    type="number"
-                    required
-                    min={1}
-                    max={100}
-                    step={1}
-                  />
-                </label>
-                <label>
-                  Data to migrate (GB)
-                  <input
-                    {...field("data_gb")}
-                    type="number"
-                    min={0}
-                    max={1e9}
-                    step="any"
-                    placeholder="Unknown"
-                  />
-                </label>
-                <label>
-                  Measured transfer speed (Mbps)
-                  <input
-                    {...field("transfer_mbps")}
-                    type="number"
-                    min={0.001}
-                    max={1e7}
-                    step="any"
-                    placeholder="Optional; from a transfer test"
-                  />
-                </label>
-              </div>
+              <EnvironmentEvidence
+                environment={
+                  scans.find((s) => s.id === network)?.result?.deployment
+                    ?.environment
+                }
+              />
+              <details className="environment-overrides">
+                <summary>
+                  Optional corrections, target hosting & data size
+                </summary>
+                <div className="form-grid">
+                  <label>
+                    Current hosting
+                    <input
+                      {...field("current_host")}
+                      placeholder="e.g. AWS, a VPS, shared hosting"
+                      maxLength={200}
+                    />
+                  </label>
+                  <label>
+                    Target hosting
+                    <input
+                      {...field("target_host")}
+                      placeholder="Where do you want to move?"
+                      maxLength={200}
+                    />
+                  </label>
+                  <label>
+                    Application stack
+                    <input
+                      {...field("stack")}
+                      placeholder="Detected automatically when possible"
+                      maxLength={200}
+                    />
+                  </label>
+                  <label>
+                    Database
+                    <select {...field("database")}>
+                      <option value="unknown">
+                        Discover from linked dependencies
+                      </option>
+                      <option value="none">No database / stateless</option>
+                      <option value="postgresql">PostgreSQL</option>
+                      <option value="mysql">MySQL</option>
+                      <option value="mongodb">MongoDB</option>
+                      <option value="other">Other database</option>
+                    </select>
+                  </label>
+                  <label>
+                    Applications
+                    <input
+                      {...field("application_count")}
+                      type="number"
+                      required
+                      min={1}
+                      max={100}
+                      step={1}
+                    />
+                  </label>
+                  <label>
+                    Data to migrate (GB)
+                    <input
+                      {...field("data_gb")}
+                      type="number"
+                      min={0}
+                      max={1e9}
+                      step="any"
+                      placeholder="Unknown"
+                    />
+                  </label>
+                  <label>
+                    Measured transfer speed (Mbps)
+                    <input
+                      {...field("transfer_mbps")}
+                      type="number"
+                      min={0.001}
+                      max={1e7}
+                      step="any"
+                      placeholder="Optional; from a transfer test"
+                    />
+                  </label>
+                </div>
+              </details>
               <div className="form-divider">
                 <h3>3. Add your traffic baseline</h3>
                 <p>
@@ -652,6 +666,56 @@ export function MigrationPlanner({
                   </ul>
                 </details>
               </section>
+              <EnvironmentEvidence environment={plan.environment} />
+              {plan.cryptographic_migration && (
+                <section className="ec-panel pq-roadmap">
+                  <div className="panel-heading">
+                    <div>
+                      <h2>Classical → post-quantum migration</h2>
+                      <p>Role-specific algorithm targets, based on this scan</p>
+                    </div>
+                  </div>
+                  <PostQuantumEvidence
+                    evidence={
+                      plan.cryptographic_migration.tls_key_exchange?.tests
+                        ? plan.cryptographic_migration.tls_key_exchange
+                        : undefined
+                    }
+                  />
+                  {plan.cryptographic_migration.upgrades.map((u, i) => (
+                    <article key={i}>
+                      <span className="eyebrow">{u.role}</span>
+                      <h3>{u.current}</h3>
+                      <p className="pq-target">→ {u.target}</p>
+                      <p>{u.reason}</p>
+                      <small>{u.evidence}</small>
+                      <details>
+                        <summary>How to migrate & verify</summary>
+                        <p>
+                          <strong>Migration:</strong> {u.action}
+                        </p>
+                        <p>
+                          <strong>Verify:</strong> {u.validation}
+                        </p>
+                        {u.reference && (
+                          <a
+                            href={u.reference}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Algorithm standard ↗
+                          </a>
+                        )}
+                      </details>
+                    </article>
+                  ))}
+                  <div className="plan-limitations">
+                    {plan.cryptographic_migration.limitations.map((x) => (
+                      <p key={x}>{x}</p>
+                    ))}
+                  </div>
+                </section>
+              )}
               {!!plan.priorities.length && (
                 <section className="ec-panel priorities">
                   <div className="panel-heading">

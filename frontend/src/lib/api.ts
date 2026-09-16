@@ -1,3 +1,28 @@
+export type EnvironmentEvidence = {
+  status: string;
+  signals: {
+    category: string;
+    value: string;
+    evidence: string;
+    source: string;
+    confidence: string;
+  }[];
+  limitations?: string[];
+};
+export type PQEvidence = {
+  status: string;
+  reason: string;
+  scanner_version?: string;
+  supported_groups: string[];
+  scope: string;
+  tests: {
+    group: string;
+    status: string;
+    reason?: string;
+    evidence?: string;
+    negotiated_group?: string;
+  }[];
+};
 export type Finding = {
   primitive: string;
   severity?: string;
@@ -16,12 +41,14 @@ export type ScanResult = {
   protocol?: string;
   cipher_name?: string;
   pqc_status?: string;
+  post_quantum?: PQEvidence;
   certificate?: Record<string, unknown>;
   coverage?: unknown;
   dependencies?: unknown[];
   status?: string;
   limitations?: string[];
   deployment?: {
+    environment?: EnvironmentEvidence;
     status: string;
     status_code?: number;
     hosting_hints?: {

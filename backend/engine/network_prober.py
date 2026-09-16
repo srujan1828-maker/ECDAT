@@ -9,6 +9,7 @@ import ssl
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
+from .pqc_probe import probe_pqc, pqc_label
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
@@ -138,6 +139,8 @@ def probe_tls_endpoint(host, port=443, timeout=2.0):
                 result['cipher_tests'].append({'cipher': cipher, 'status': 'supported', 'negotiated': conn.cipher()[0]})
         except (OSError, ValueError) as exc:
             result['cipher_tests'].append({'cipher': cipher, 'status': 'not_negotiated', 'reason': str(exc)})
+    result['post_quantum'] = probe_pqc(clean_host, address[1][0], actual_port)
+    result['pqc_status'] = pqc_label(result['post_quantum'])
     result['coverage'] = {'addresses_tested': 1, 'protocol_candidates': 4, 'cipher_candidates': 4,
-                          'limitations': ['Cipher list is bounded, not exhaustive.', 'No negotiated-group/PQC measurement or revocation check.', 'Failed negotiation may reflect local OpenSSL capabilities.']}
+                          'limitations': ['Cipher list is bounded, not exhaustive.', 'PQC capability is tested in separate TLS 1.3 handshakes; no revocation or full-chain PQ signature check.', 'Failed negotiation may reflect local OpenSSL capabilities.']}
     return result

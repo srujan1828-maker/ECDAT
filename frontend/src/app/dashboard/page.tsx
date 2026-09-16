@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { requestApi, Scan, ScanResult } from "@/lib/api";
 import Link from "next/link";
+import { PostQuantumEvidence } from "@/components/ecdat/evidence-panels";
 import { ThemeToggle } from "@/components/ecdat/theme-toggle";
 import { Overview } from "@/components/ecdat/overview";
 import { MigrationPlanner } from "@/components/ecdat/migration-planner";
@@ -795,7 +796,7 @@ export default function Dashboard() {
                   </ul>
                   <div className="mt-5 border-t border-subtle pt-4 text-[11px] leading-relaxed text-quiet">
                     {mode === "network"
-                      ? "Only scan targets you are authorized to test. Post-quantum support is shown as unknown when it cannot be measured."
+                      ? "Only scan targets you are authorized to test. Post-quantum key exchange is tested with explicit hybrid groups; individual results show runtime and connection limitations."
                       : mode === "code"
                         ? "Python uses code structure analysis. Other languages use pattern matching, so findings may need a closer look."
                         : "A matching signature does not prove the algorithm is used. ZIP scanning covers one level, up to 100 entries and 8 MiB expanded."}
@@ -1144,6 +1145,11 @@ export default function Dashboard() {
                               </div>
                             </details>
                           )}
+                          {current.kind === "network" && (
+                            <PostQuantumEvidence
+                              evidence={result.post_quantum}
+                            />
+                          )}
                           {result.deployment && (
                             <div className="rounded-md border border-subtle p-3 text-xs">
                               <h3 className="font-semibold">
@@ -1183,6 +1189,7 @@ export default function Dashboard() {
                                   certificate: result.certificate,
                                   deployment: result.deployment,
                                   pqc_status: result.pqc_status,
+                                  post_quantum: result.post_quantum,
                                   protocol_tests: result.protocol_tests,
                                   cipher_tests: result.cipher_tests,
                                   dependencies: result.dependencies,

@@ -3,10 +3,11 @@ import re
 import time
 from .network_prober import probe_tls_endpoint, _handshake, _context
 import socket
+from .environment_discovery import discover_environment
 
 MAX_HEADERS = 16 * 1024
 ALLOWED_HEADERS = {'server', 'via', 'x-powered-by', 'cf-ray', 'x-vercel-id',
-                   'x-amz-cf-id', 'x-cache', 'strict-transport-security', 'location'}
+                   'x-amz-cf-id', 'x-nf-request-id', 'fly-request-id', 'x-served-by', 'x-cache', 'strict-transport-security', 'location'}
 
 
 def inspect_http(host, port, address, timeout=3.0):
@@ -65,5 +66,71 @@ def scan_website(target, port=443):
         # the hostname a second time and never let a redirect select another target.
         ip = result['ip_address']
         address = (socket.AF_INET6, (ip, result['port'], 0, 0)) if ':' in ip else (socket.AF_INET, (ip, result['port']))
-        result['deployment'] = inspect_http(result['host'], result['port'], address)
+        deployment = inspect_http(result['host'], result['port'], address)
+        environment = discover_environment(deployment['headers'])
+        html = inspect_html(result['host'], result['port'], address)
+        for signal in html['signals']:
+            if not any(s['category'] == signal['category'] and s['value'] == signal['value'] for s in environment['signals']):
+                environment['signals'].append(signal)
+        environment['status'] = 'signals_found' if environment['signals'] else 'no_public_signals'
+        deployment['environment'] = environment
+        deployment['html_discovery'] = {k: v for k, v in html.items() if k != 'signals'}
+        result['deployment'] = deployment
     return result
+
+
+def inspect_html(host, port, address, timeout=3.0):
+    """Sample at most 128 KiB from HTTPS root. No redirects or resource crawling."""
+    started = time.monotonic()
+    limit = 128 * 1024
+    response = {'status': 'unavailable', 'sample_bytes': 0, 'signals': []}
+    try:
+        with _handshake(host, address, _context(), timeout) as conn:
+            authority = f'[{host}]' if ':' in host else host
+            authority += f':{port}' if port != 443 else ''
+            conn.sendall(f'GET / HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: ECDAT/3.2\r\nAccept: text/html\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n'.encode('ascii'))
+            data = bytearray()
+            while b'\r\n\r\n' not in data:
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0: raise TimeoutError('HTML header deadline exceeded')
+                conn.settimeout(remaining)
+                part = conn.recv(min(2048, MAX_HEADERS + 1 - len(data)))
+                if not part: raise ValueError('Incomplete HTML response headers')
+                data.extend(part)
+                if len(data) > MAX_HEADERS: raise ValueError('HTML headers exceed 16 KiB')
+            header, body = bytes(data).split(b'\r\n\r\n', 1)
+            lines = header.decode('iso-8859-1').split('\r\n')
+            if not re.match(r'^HTTP/1\.[01] 200(?: |$)', lines[0]):
+                return dict(response, status='skipped', reason='Root did not return HTTP 200; redirects are not followed.')
+            headers = {a.lower(): b.strip() for line in lines[1:] for a, sep, b in [line.partition(':')] if sep}
+            if 'text/html' not in headers.get('content-type', '').lower():
+                return dict(response, status='skipped', reason='Root is not declared text/html.')
+            if headers.get('content-encoding', 'identity').lower() != 'identity':
+                return dict(response, status='skipped', reason='Compressed HTML is not expanded by this bounded sampler.')
+            body = bytearray(body)
+            expected = int(headers['content-length']) if headers.get('content-length', '').isdigit() else None
+            while len(body) < limit and (expected is None or len(body) < expected):
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0: break
+                conn.settimeout(remaining)
+                try: part = conn.recv(min(8192, limit - len(body)))
+                except socket.timeout: break
+                if not part: break
+                body.extend(part)
+            sampled = bytes(body[:limit])
+            if 'chunked' in headers.get('transfer-encoding', '').lower():
+                # Decode only complete chunks from the bounded wire sample.
+                decoded, cursor = bytearray(), 0
+                while cursor < len(sampled):
+                    end = sampled.find(b'\r\n', cursor)
+                    if end < 0: break
+                    size = int(sampled[cursor:end].split(b';')[0], 16)
+                    cursor = end + 2
+                    if size == 0 or cursor + size + 2 > len(sampled): break
+                    decoded.extend(sampled[cursor:cursor+size]); cursor += size + 2
+                sampled = bytes(decoded)
+            environment = discover_environment({}, sampled.decode('utf-8', 'replace'))
+            return {'status': 'sampled', 'sample_bytes': len(sampled), 'signals': environment['signals'],
+                    'limit_bytes': limit, 'reason': 'Bounded root HTML sample; scripts were not executed and resources were not crawled.'}
+    except (OSError, ValueError) as exc:
+        return dict(response, reason=str(exc)[:200])
