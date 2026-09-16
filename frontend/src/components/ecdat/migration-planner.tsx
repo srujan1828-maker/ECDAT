@@ -25,7 +25,45 @@ export function MigrationPlanner({
   token: string;
   onScan: () => void;
 }) {
-  const [network, setNetwork] = useState("");
+  const [networkSelection, setNetwork] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [websiteJob, setWebsiteJob] = useState<string | null>(null);
+  const [submittingScan, setSubmittingScan] = useState(false);
+  const pendingWebsite = scans.find((s) => s.id === websiteJob);
+  const websiteScanning =
+    !!websiteJob &&
+    (!pendingWebsite || ["queued", "running"].includes(pendingWebsite.status));
+  const network =
+    networkSelection ||
+    (pendingWebsite?.status === "completed" ? pendingWebsite.id : "");
+  const websiteStatus =
+    pendingWebsite?.status === "failed" ||
+    pendingWebsite?.status === "cancelled"
+      ? pendingWebsite.error ||
+        "The scan did not complete. Check the address and try again."
+      : pendingWebsite?.status === "completed"
+        ? "Website inspected. Its evidence is selected below; add context and build your plan."
+        : null;
+  async function inspectWebsite() {
+    if (!websiteUrl.trim()) {
+      setError("Enter a website hostname or HTTPS URL.");
+      return;
+    }
+    setSubmittingScan(true);
+    setError("");
+    setNetwork("");
+    setWebsiteJob(null);
+    try {
+      const job = await requestApi<Scan>("/scan/network", project, token, {
+        target: websiteUrl.trim(),
+      });
+      setWebsiteJob(job.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmittingScan(false);
+    }
+  }
   const [related, setRelated] = useState<string[]>([]);
   const [plan, setPlan] = useState<MigrationPlan | null>(null);
   const [history, setHistory] = useState<PlanSummary[]>([]);
@@ -167,6 +205,42 @@ export function MigrationPlanner({
               <Route size={18} />
             </div>
             <div className="form-body">
+              <div className="planner-url-scan">
+                <label>
+                  Start with a website
+                  <input
+                    value={websiteUrl}
+                    onChange={(e) => setWebsiteUrl(e.target.value)}
+                    placeholder="example.org or https://example.org"
+                    maxLength={253}
+                    aria-label="Website to assess for migration"
+                  />
+                </label>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className="ec-button"
+                    disabled={submittingScan || websiteScanning}
+                    onClick={() => void inspectWebsite()}
+                  >
+                    {submittingScan || websiteScanning ? (
+                      <LoaderCircle size={16} className="animate-spin" />
+                    ) : (
+                      <Globe2 size={16} />
+                    )}{" "}
+                    {submittingScan || websiteScanning
+                      ? "Inspecting website…"
+                      : "Inspect website"}
+                  </button>
+                </div>
+                <p className="field-help" role="status">
+                  {websiteStatus ||
+                    (websiteScanning
+                      ? "Checking TLS, certificates and public deployment clues. The completed scan will be selected below."
+                      : "Inspect a website you are authorized to test, or choose an existing scan below. No extra trip to the scanner is needed.")}
+                </p>
+              </div>
+
               <label>
                 Website scan
                 <select

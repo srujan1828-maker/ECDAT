@@ -145,9 +145,9 @@
 
 /* ECDAT / shared Figma and application palette */
 :root {
-  --canvas: #f5f6f8;
-  --surface: #fff;
-  --raised: #edf0f2;
+  --canvas: #ffffff;
+  --surface: #ffffff;
+  --raised: #f3f5f7;
   --border: #d9dee3;
   --text: #171b20;
   --muted-text: #58616d;
@@ -1579,4 +1579,39 @@ button:disabled {
     transition: none !important;
     animation: none !important;
   }
+}
+
+/* White-first workspace: quiet contrast, crisp table borders and teal actions. */
+:root:not(.dark) .workspace-shell {
+  background: #ffffff;
+}
+:root:not(.dark) .workspace-shell > aside {
+  background: #f8fafb;
+}
+:root:not(.dark) .starting-tips {
+  background: #f0faf7;
+}
+:root:not(.dark) .ec-panel,
+:root:not(.dark) .metric,
+:root:not(.dark) .capability-card {
+  box-shadow: 0 3px 14px #172b3a05;
+}
+:root:not(.dark) .hero {
+  background:
+    radial-gradient(ellipse at 80% 40%, #e9f8f3, transparent 58%), #fff;
+}
+:root:not(.dark) .landing-nav {
+  background: #fff;
+}
+.planner-url-scan {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--canvas);
+}
+.planner-url-scan .button-row {
+  margin-top: 12px;
+}
+.planner-url-scan .field-help {
+  margin-bottom: 0;
 }

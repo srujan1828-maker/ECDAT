@@ -25,11 +25,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("ecdat-theme");document.documentElement.classList.toggle("dark",t?t==="dark":!window.matchMedia("(prefers-color-scheme: light)").matches)}catch(e){}})();`,
+            __html: `(function(){try{var t=localStorage.getItem("ecdat-theme-v2");document.documentElement.classList.toggle("dark",t==="dark")}catch(e){}})();`,
           }}
         />
       </head>

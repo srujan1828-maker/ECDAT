@@ -10,12 +10,12 @@ function snapshot() {
   return document.documentElement.classList.contains("dark");
 }
 export function ThemeToggle() {
-  const dark = useSyncExternalStore(subscribe, snapshot, () => true);
+  const dark = useSyncExternalStore(subscribe, snapshot, () => false);
   function toggle() {
     const next = !snapshot();
     document.documentElement.classList.toggle("dark", next);
     try {
-      localStorage.setItem("ecdat-theme", next ? "dark" : "light");
+      localStorage.setItem("ecdat-theme-v2", next ? "dark" : "light");
     } catch {
       // Theme still works when browser storage is unavailable.
     }
