@@ -277,7 +277,6 @@ export default function Dashboard() {
   }
 
   const featureScans = scans.filter((scan) => scan.kind === mode);
-  const current = featureScans.find((scan) => scan.id === selected);
   const historyCurrent = scans.find((s) => s.id === selected);
   const completed = featureScans.filter((s) => s.status === "completed");
   const running = featureScans.filter((s) =>
@@ -648,14 +647,20 @@ export default function Dashboard() {
                           <label className="block min-w-0 rounded-md border border-subtle bg-canvas/50 p-3 text-xs text-foreground">
                             <span className="flex items-center gap-2">
                               <FolderOpen size={14} className="text-teal" />
-                              Or choose a folder
+                              Choose a folder
+                            </span>
+                            <span className="mt-1 block text-[10px] text-quiet">
+                              Select a source folder to include its files.
+                            </span>
+                            <span className="mt-3 inline-flex rounded bg-surface-raised px-2 py-1.5 text-[11px] font-medium text-foreground">
+                              Choose folder
                             </span>
                             <input
                               type="file"
                               multiple
                               {...{ webkitdirectory: "" }}
-                              aria-label="Source folder"
-                              className="mt-3 block w-full min-w-0 text-[11px] text-quiet file:mr-2 file:rounded file:border-0 file:bg-surface-raised file:px-2 file:py-1.5 file:text-foreground"
+                              aria-label="Choose source folder"
+                              className="sr-only"
                               onChange={(e) =>
                                 setSourceFiles(Array.from(e.target.files || []))
                               }
@@ -786,131 +791,6 @@ export default function Dashboard() {
                         : "A matching signature does not prove the algorithm is used. ZIP scanning covers one level, up to 100 entries and 8 MiB expanded."}
                   </div>
                 </aside>
-              </div>
-              <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                <section
-                  className={panelClass}
-                  aria-labelledby="feature-history-heading"
-                >
-                  <div className="flex items-center justify-between border-b border-subtle px-5 py-3.5">
-                    <h3
-                      id="feature-history-heading"
-                      className="flex items-center gap-2 text-sm font-semibold"
-                    >
-                      <History size={15} className="text-teal" />
-                      {kindLabels[mode]} scan history
-                    </h3>
-                    <span className="text-[10px] text-quiet">
-                      {featureScans.length} records
-                    </span>
-                  </div>
-                  {!featureScans.length ? (
-                    <p className="px-5 py-10 text-center text-xs text-quiet">
-                      No {kindLabels[mode].toLowerCase()} scans yet.
-                    </p>
-                  ) : (
-                    <div className="max-h-72 divide-y divide-[var(--ecdat-border-subtle)] overflow-auto">
-                      {featureScans.map((scan) => (
-                        <button
-                          key={scan.id}
-                          onClick={() => setSelected(scan.id)}
-                          className={`flex w-full items-center gap-3 border-l-2 px-4 py-3 text-left ${selected === scan.id ? "border-l-cyan-500 bg-cyan-500/5" : "border-l-transparent hover:bg-surface-raised/30"}`}
-                        >
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-xs font-medium">
-                              {scanLabel(scan)}
-                            </span>
-                            <span className="mt-1 block text-[10px] text-quiet">
-                              {new Date(scan.created_at).toLocaleString()}
-                            </span>
-                          </span>
-                          <StatusBadge status={scan.status} />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </section>
-                <section
-                  className={panelClass}
-                  aria-labelledby="feature-results-heading"
-                >
-                  <div className="flex items-center justify-between border-b border-subtle px-5 py-3.5">
-                    <h3
-                      id="feature-results-heading"
-                      className="flex items-center gap-2 text-sm font-semibold"
-                    >
-                      <FileCode2 size={15} className="text-teal" />
-                      {kindLabels[mode]} scan results
-                    </h3>
-                    {current && <StatusBadge status={current.status} />}
-                  </div>
-                  {!current ? (
-                    <p className="px-5 py-10 text-center text-xs text-quiet">
-                      Select a {kindLabels[mode].toLowerCase()} scan to view its
-                      results.
-                    </p>
-                  ) : (
-                    <div className="space-y-3 p-5">
-                      <p className="break-all text-sm font-medium">
-                        {scanLabel(current)}
-                      </p>
-                      {current.error && (
-                        <p className="rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs text-danger">
-                          {current.error}
-                        </p>
-                      )}
-                      {current.result ? (
-                        <>
-                          <div className="rounded-md border border-subtle bg-canvas/50 p-3 text-xs">
-                            <p>
-                              {
-                                (
-                                  current.result.findings ||
-                                  current.result.detections ||
-                                  []
-                                ).length
-                              }{" "}
-                              finding
-                              {(
-                                current.result.findings ||
-                                current.result.detections ||
-                                []
-                              ).length === 1
-                                ? ""
-                                : "s"}
-                            </p>
-                            {mode === "network" && (
-                              <p className="mt-1 text-quiet">
-                                {current.result.protocol ||
-                                  "Protocol not measured"}{" "}
-                                ·{" "}
-                                {current.result.cipher_name ||
-                                  "Encryption not measured"}
-                              </p>
-                            )}
-                          </div>
-                          <details
-                            className="rounded-md border border-subtle"
-                            open={mode === "binary"}
-                          >
-                            <summary className="cursor-pointer px-3 py-3 text-xs font-medium">
-                              {mode === "binary"
-                                ? "Complete firmware details & evidence"
-                                : "Complete scan details & evidence"}
-                            </summary>
-                            <pre className="max-h-72 overflow-auto border-t border-subtle bg-canvas/50 p-3 text-[10px] whitespace-pre-wrap break-all text-quiet">
-                              {JSON.stringify(current.result, null, 2)}
-                            </pre>
-                          </details>
-                        </>
-                      ) : (
-                        <p className="text-xs text-quiet">
-                          Results are not available yet.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </section>
               </div>
             </>
           )}
@@ -1165,16 +1045,64 @@ export default function Dashboard() {
                             </div>
                           </div>
                           {historyCurrent.kind === "network" && (
-                            <div className="rounded-md border border-subtle bg-canvas/50 p-3 text-xs">
-                              <p>
-                                TLS:{" "}
-                                {historyCurrent.result.protocol ||
-                                  "Not measured"}
+                            <>
+                              <div className="rounded-md border border-subtle bg-canvas/50 p-3 text-xs">
+                                <p>
+                                  TLS:{" "}
+                                  {historyCurrent.result.protocol ||
+                                    "Not measured"}
+                                </p>
+                                <p className="mt-1">
+                                  Encryption:{" "}
+                                  {historyCurrent.result.cipher_name ||
+                                    "Not measured"}
+                                </p>
+                              </div>
+                              <div
+                                className={`rounded-md border p-3 text-xs ${historyCurrent.result.quantum_vulnerable === true ? "border-red-500/25 bg-red-500/5 text-danger" : historyCurrent.result.quantum_vulnerable === false ? "border-emerald-500/25 bg-emerald-500/5 text-success" : "border-amber-500/25 bg-amber-500/5 text-warning"}`}
+                              >
+                                <p className="font-semibold">
+                                  Post-quantum threat assessment
+                                </p>
+                                <p className="mt-1">
+                                  {historyCurrent.result.quantum_vulnerable ===
+                                  true
+                                    ? "Potentially vulnerable to a post-quantum threat. Prioritize cryptographic migration."
+                                    : historyCurrent.result
+                                          .quantum_vulnerable === false
+                                      ? "No post-quantum vulnerability was identified by this scan."
+                                      : "Not conclusive. The scanner could not determine post-quantum exposure."}
+                                </p>
+                                <p className="mt-2 text-quiet">
+                                  PQC capability:{" "}
+                                  {historyCurrent.result.pqc_status ||
+                                    "Not measured"}
+                                </p>
+                                {historyCurrent.result.hndl_risk && (
+                                  <p className="mt-1 text-quiet">
+                                    Harvest-now, decrypt-later risk:{" "}
+                                    {historyCurrent.result.hndl_risk}
+                                  </p>
+                                )}
+                                {historyCurrent.result.hndl_rationale && (
+                                  <p className="mt-1 leading-relaxed text-quiet">
+                                    {historyCurrent.result.hndl_rationale}
+                                  </p>
+                                )}
+                              </div>
+                            </>
+                          )}
+                          {historyCurrent.kind !== "network" && (
+                            <div className="rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-warning">
+                              <p className="font-semibold">
+                                Post-quantum threat assessment
                               </p>
                               <p className="mt-1">
-                                Encryption:{" "}
-                                {historyCurrent.result.cipher_name ||
-                                  "Not measured"}
+                                This scan type identifies cryptographic evidence
+                                but does not determine whether the deployed
+                                system is post-quantum vulnerable. Review its
+                                findings and run a network scan for measured TLS
+                                exposure.
                               </p>
                             </div>
                           )}

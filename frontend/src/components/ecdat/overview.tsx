@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import {
   Area,
   AreaChart,
@@ -16,7 +16,6 @@ import {
   Globe2,
   Code2,
   Binary,
-  BookOpen,
   Route,
   X,
   ShieldAlert,
@@ -37,7 +36,19 @@ export function Overview({
   onInspect: (id: string) => void;
   onMigration: () => void;
 }) {
-  const [tips, setTips] = useState(true);
+  const [tipsDismissed, setTipsDismissed] = useState(false);
+  const tipsSeen = useSyncExternalStore(
+    () => () => undefined,
+    () => window.localStorage.getItem("ecdat-starting-tips-seen") === "true",
+    () => true,
+  );
+  const tips = !tipsSeen && !tipsDismissed;
+
+  function dismissTips() {
+    window.localStorage.setItem("ecdat-starting-tips-seen", "true");
+    setTipsDismissed(true);
+  }
+
   const [days, setDays] = useState(7);
   const complete = scans.filter((s) => s.status === "completed");
   const active = scans.filter((s) => ["queued", "running"].includes(s.status));
@@ -47,7 +58,9 @@ export function Overview({
   const severityCounts = findings.reduce(
     (counts, finding) => {
       const level = finding as { severity?: string; risk?: string };
-      const severity = String(level.severity || level.risk || "unknown").toLowerCase();
+      const severity = String(
+        level.severity || level.risk || "unknown",
+      ).toLowerCase();
       if (severity.includes("critical")) counts.critical += 1;
       else if (severity.includes("high")) counts.high += 1;
       else if (severity.includes("medium")) counts.medium += 1;
@@ -59,9 +72,18 @@ export function Overview({
   );
   const riskScore = Math.min(
     100,
-    severityCounts.critical * 28 + severityCounts.high * 14 + severityCounts.medium * 6 + severityCounts.low * 2,
+    severityCounts.critical * 28 +
+      severityCounts.high * 14 +
+      severityCounts.medium * 6 +
+      severityCounts.low * 2,
   );
-  const posture = !findings.length ? "Awaiting evidence" : riskScore >= 55 ? "Action required" : riskScore >= 20 ? "Review recommended" : "Controlled";
+  const posture = !findings.length
+    ? "Awaiting evidence"
+    : riskScore >= 55
+      ? "Action required"
+      : riskScore >= 20
+        ? "Review recommended"
+        : "Controlled";
   const quantumReadiness = complete.length ? Math.max(18, 100 - riskScore) : 0;
   const migrationReadiness = complete.length ? Math.max(12, 86 - riskScore) : 0;
   const data = useMemo(
@@ -96,42 +118,70 @@ export function Overview({
           New scan <ArrowRight size={16} />
         </button>
       </div>
-      {tips ? (
-        <section className="starting-tips">
-          <div className="tips-title">
-            <BookOpen size={18} />
-            <strong>Your first scan, in three steps</strong>
-            <button
-              onClick={() => setTips(false)}
-              aria-label="Hide starting tips"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <div className="tips-grid">
-            {[
-              ["01", "Choose a target", "Start with a website you own."],
-              [
-                "02",
-                "Review the evidence",
-                "Check findings and scan coverage.",
-              ],
-              ["03", "Plan your next move", "Add context and build a roadmap."],
-            ].map(([n, t, d]) => (
-              <div key={n}>
-                <span>{n}</span>
-                <p>
-                  <strong>{t}</strong>
-                  <small>{d}</small>
+      {tips && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tips-heading"
+        >
+          <section className="w-full max-w-2xl rounded-xl border border-subtle bg-surface p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="eyebrow">WELCOME TO ECDAT</p>
+                <h2 id="tips-heading" className="mt-2 text-xl font-semibold">
+                  Your first scan, in three steps
+                </h2>
+                <p className="mt-2 text-sm text-quiet">
+                  This quick guide is shown once. You can start with any scan
+                  type when you are ready.
                 </p>
               </div>
-            ))}
-          </div>
-        </section>
-      ) : (
-        <button className="text-action" onClick={() => setTips(true)}>
-          <BookOpen size={14} /> Show starting tips
-        </button>
+              <button
+                onClick={dismissTips}
+                aria-label="Close starting tips"
+                className="rounded p-1 text-quiet hover:bg-surface-raised"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              {[
+                [
+                  "01",
+                  "Choose a target",
+                  "Start with a website, code, or firmware you are authorized to inspect.",
+                ],
+                [
+                  "02",
+                  "Review the evidence",
+                  "Use scan results to understand findings and coverage.",
+                ],
+                [
+                  "03",
+                  "Plan your next move",
+                  "Create a report and prioritize remediation.",
+                ],
+              ].map(([n, title, text]) => (
+                <div
+                  key={n}
+                  className="rounded-lg border border-subtle bg-canvas/50 p-4"
+                >
+                  <span className="font-mono text-xs text-teal">{n}</span>
+                  <h3 className="mt-2 text-sm font-semibold">{title}</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-quiet">
+                    {text}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button className="ec-button" onClick={dismissTips}>
+                Get started <ArrowRight size={15} />
+              </button>
+            </div>
+          </section>
+        </div>
       )}
       <section className="command-posture">
         <div className="posture-overview">
@@ -139,15 +189,28 @@ export function Overview({
             <ShieldAlert size={17} /> SECURITY POSTURE
           </div>
           <div className="posture-score-row">
-            <strong>{complete.length ? String(100 - riskScore).padStart(2, "0") : "—"}</strong>
+            <strong>
+              {complete.length ? String(100 - riskScore).padStart(2, "0") : "—"}
+            </strong>
             <div>
               <h2>{posture}</h2>
-              <p>{complete.length ? `${findings.length} recorded findings across ${complete.length} completed scans.` : "Run a scan to establish your cryptographic risk baseline."}</p>
+              <p>
+                {complete.length
+                  ? `${findings.length} recorded findings across ${complete.length} completed scans.`
+                  : "Run a scan to establish your cryptographic risk baseline."}
+              </p>
             </div>
           </div>
           <div className="posture-actions">
-            <button className="ec-button compact" onClick={() => onStart("network")}>Run network scan <ArrowRight size={14} /></button>
-            <button className="text-action" onClick={onMigration}>Open migration plan <Route size={14} /></button>
+            <button
+              className="ec-button compact"
+              onClick={() => onStart("network")}
+            >
+              Run network scan <ArrowRight size={14} />
+            </button>
+            <button className="text-action" onClick={onMigration}>
+              Open migration plan <Route size={14} />
+            </button>
           </div>
         </div>
         <div className="severity-strip" aria-label="Finding severity summary">
@@ -162,25 +225,47 @@ export function Overview({
               <strong>{String(value)}</strong>
             </div>
           ))}
-          <p><span className="status-dot" /> {connected ? "Evidence service connected" : "Connect a project to load evidence"}</p>
+          <p>
+            <span className="status-dot" />{" "}
+            {connected
+              ? "Evidence service connected"
+              : "Connect a project to load evidence"}
+          </p>
         </div>
       </section>
       <section className="readiness-grid" aria-label="Readiness summary">
         {[
-          [Gauge, "Quantum readiness", quantumReadiness, "Exposure measured against the current inventory."],
-          [Radar, "Migration readiness", migrationReadiness, "Planning confidence based on available evidence."],
+          [
+            Gauge,
+            "Quantum readiness",
+            quantumReadiness,
+            "Exposure measured against the current inventory.",
+          ],
+          [
+            Radar,
+            "Migration readiness",
+            migrationReadiness,
+            "Planning confidence based on available evidence.",
+          ],
         ].map(([Icon, label, value, detail]) => {
           const ReadinessIcon = Icon as typeof Gauge;
-          return <article className="readiness-card" key={String(label)}>
-            <div className="readiness-ring" style={{ "--readiness": `${String(value)}%` } as React.CSSProperties}>
-              <span>{value ? `${String(value)}%` : "—"}</span>
-            </div>
-            <div>
-              <ReadinessIcon size={17} />
-              <h2>{String(label)}</h2>
-              <p>{String(detail)}</p>
-            </div>
-          </article>;
+          return (
+            <article className="readiness-card" key={String(label)}>
+              <div
+                className="readiness-ring"
+                style={
+                  { "--readiness": `${String(value)}%` } as React.CSSProperties
+                }
+              >
+                <span>{value ? `${String(value)}%` : "—"}</span>
+              </div>
+              <div>
+                <ReadinessIcon size={17} />
+                <h2>{String(label)}</h2>
+                <p>{String(detail)}</p>
+              </div>
+            </article>
+          );
         })}
       </section>
       <div className="metric-grid">
