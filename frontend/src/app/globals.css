@@ -1772,7 +1772,6 @@ button:disabled {
     0 32px 80px rgb(20 34 39 / 15%),
     inset 0 1px 0 rgb(255 255 255 / 62%);
   transform-origin: 52% 58%;
-  animation: system-vibrate 5.5s linear infinite;
   will-change: transform;
 }
 .visual-sheen {
@@ -1813,15 +1812,18 @@ button:disabled {
   box-shadow: 0 12px 30px color-mix(in srgb, var(--teal) 11%, transparent);
 }
 .status-dot { animation: status-pulse 2.8s ease-in-out infinite; }
+@media (hover: hover) and (pointer: fine) {
+  .system-visual:hover {
+    animation: system-hover-wobble 900ms ease-in-out infinite;
+  }
+}
 
-@keyframes system-vibrate {
-  0%, 82%, 100% { transform: rotate(-1deg) translate3d(0, 0, 0); }
-  84% { transform: rotate(-0.45deg) translate3d(-2px, 1px, 0); }
-  86% { transform: rotate(-1.55deg) translate3d(3px, -1px, 0); }
-  88% { transform: rotate(-0.6deg) translate3d(-3px, 1px, 0); }
-  90% { transform: rotate(-1.4deg) translate3d(2px, -1px, 0); }
-  92% { transform: rotate(-0.8deg) translate3d(-1px, 0, 0); }
-  94% { transform: rotate(-1deg) translate3d(0, 0, 0); }
+@keyframes system-hover-wobble {
+  0%, 100% { transform: rotate(-1deg) translate3d(0, 0, 0); }
+  20% { transform: rotate(0.6deg) translate3d(3px, -2px, 0); }
+  42% { transform: rotate(-1.7deg) translate3d(-3px, 1px, 0); }
+  64% { transform: rotate(0.2deg) translate3d(2px, -1px, 0); }
+  82% { transform: rotate(-1.35deg) translate3d(-1px, 0, 0); }
 }
 @keyframes node-float {
   0%, 100% { transform: translateY(0); }
@@ -1966,4 +1968,79 @@ button:disabled {
   .metric,
   .quick-action,
   .workspace-shell nav button { transition: none; }
+}
+
+/* Workspace motion: controlled, instrumentation-like feedback for dense data views. */
+.planner .workspace-heading,
+.planner-layout > .ec-panel,
+.plan-result > .ec-panel,
+.discovery-evidence,
+.roadmap > article,
+.priorities article,
+.pq-roadmap article {
+  animation: content-rise 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.planner-layout > .ec-panel:nth-child(2),
+.plan-result > .ec-panel:nth-child(2),
+.roadmap > article:nth-child(2),
+.priorities article:nth-child(2),
+.pq-roadmap article:nth-child(2) { animation-delay: 90ms; }
+.roadmap > article:nth-child(3),
+.priorities article:nth-child(3),
+.pq-roadmap article:nth-child(3) { animation-delay: 180ms; }
+.discovery-evidence {
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+.discovery-evidence:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--teal) 35%, var(--border));
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--text) 7%, transparent);
+}
+.planner input:not([type="checkbox"]),
+.planner select,
+.panel-heading select,
+.workspace-shell input {
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+.planner input:not([type="checkbox"]):focus,
+.planner select:focus,
+.panel-heading select:focus,
+.workspace-shell input:focus {
+  border-color: color-mix(in srgb, var(--teal) 65%, var(--border));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 12%, transparent);
+}
+.workspace-shell nav button:hover {
+  transform: translateX(3px);
+}
+.workspace-shell nav button:active {
+  transform: translateX(1px) scale(0.98);
+}
+.roadmap > article,
+.priorities article,
+.pq-roadmap article {
+  transition: background-color 180ms ease, padding-left 180ms ease;
+}
+.roadmap > article:hover,
+.priorities article:hover,
+.pq-roadmap article:hover {
+  background: color-mix(in srgb, var(--teal) 4%, var(--surface));
+  padding-left: 29px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .planner .workspace-heading,
+  .planner-layout > .ec-panel,
+  .plan-result > .ec-panel,
+  .discovery-evidence,
+  .roadmap > article,
+  .priorities article,
+  .pq-roadmap article { animation: none; }
+  .discovery-evidence,
+  .planner input:not([type="checkbox"]),
+  .planner select,
+  .panel-heading select,
+  .workspace-shell input,
+  .workspace-shell nav button,
+  .roadmap > article,
+  .priorities article,
+  .pq-roadmap article { transition: none; }
 }
