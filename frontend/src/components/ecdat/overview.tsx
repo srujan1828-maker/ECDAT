@@ -19,6 +19,9 @@ import {
   BookOpen,
   Route,
   X,
+  ShieldAlert,
+  Gauge,
+  Radar,
 } from "lucide-react";
 import { Scan } from "@/lib/api";
 export function Overview({
@@ -41,6 +44,26 @@ export function Overview({
   const findings = complete.flatMap(
     (s) => s.result?.findings || s.result?.detections || [],
   );
+  const severityCounts = findings.reduce(
+    (counts, finding) => {
+      const level = finding as { severity?: string; risk?: string };
+      const severity = String(level.severity || level.risk || "unknown").toLowerCase();
+      if (severity.includes("critical")) counts.critical += 1;
+      else if (severity.includes("high")) counts.high += 1;
+      else if (severity.includes("medium")) counts.medium += 1;
+      else if (severity.includes("low")) counts.low += 1;
+      else counts.unknown += 1;
+      return counts;
+    },
+    { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 },
+  );
+  const riskScore = Math.min(
+    100,
+    severityCounts.critical * 28 + severityCounts.high * 14 + severityCounts.medium * 6 + severityCounts.low * 2,
+  );
+  const posture = !findings.length ? "Awaiting evidence" : riskScore >= 55 ? "Action required" : riskScore >= 20 ? "Review recommended" : "Controlled";
+  const quantumReadiness = complete.length ? Math.max(18, 100 - riskScore) : 0;
+  const migrationReadiness = complete.length ? Math.max(12, 86 - riskScore) : 0;
   const data = useMemo(
     () =>
       Array.from({ length: days }, (_, i) => {
@@ -110,6 +133,56 @@ export function Overview({
           <BookOpen size={14} /> Show starting tips
         </button>
       )}
+      <section className="command-posture">
+        <div className="posture-overview">
+          <div className="posture-kicker">
+            <ShieldAlert size={17} /> SECURITY POSTURE
+          </div>
+          <div className="posture-score-row">
+            <strong>{complete.length ? String(100 - riskScore).padStart(2, "0") : "—"}</strong>
+            <div>
+              <h2>{posture}</h2>
+              <p>{complete.length ? `${findings.length} recorded findings across ${complete.length} completed scans.` : "Run a scan to establish your cryptographic risk baseline."}</p>
+            </div>
+          </div>
+          <div className="posture-actions">
+            <button className="ec-button compact" onClick={() => onStart("network")}>Run network scan <ArrowRight size={14} /></button>
+            <button className="text-action" onClick={onMigration}>Open migration plan <Route size={14} /></button>
+          </div>
+        </div>
+        <div className="severity-strip" aria-label="Finding severity summary">
+          {[
+            ["Critical", severityCounts.critical, "critical"],
+            ["High", severityCounts.high, "high"],
+            ["Medium", severityCounts.medium, "medium"],
+            ["Low", severityCounts.low, "low"],
+          ].map(([label, value, severity]) => (
+            <div className={`severity-item ${severity}`} key={String(label)}>
+              <span>{String(label)}</span>
+              <strong>{String(value)}</strong>
+            </div>
+          ))}
+          <p><span className="status-dot" /> {connected ? "Evidence service connected" : "Connect a project to load evidence"}</p>
+        </div>
+      </section>
+      <section className="readiness-grid" aria-label="Readiness summary">
+        {[
+          [Gauge, "Quantum readiness", quantumReadiness, "Exposure measured against the current inventory."],
+          [Radar, "Migration readiness", migrationReadiness, "Planning confidence based on available evidence."],
+        ].map(([Icon, label, value, detail]) => {
+          const ReadinessIcon = Icon as typeof Gauge;
+          return <article className="readiness-card" key={String(label)}>
+            <div className="readiness-ring" style={{ "--readiness": `${String(value)}%` } as React.CSSProperties}>
+              <span>{value ? `${String(value)}%` : "—"}</span>
+            </div>
+            <div>
+              <ReadinessIcon size={17} />
+              <h2>{String(label)}</h2>
+              <p>{String(detail)}</p>
+            </div>
+          </article>;
+        })}
+      </section>
       <div className="metric-grid">
         {[
           [

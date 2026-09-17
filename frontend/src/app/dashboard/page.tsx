@@ -324,31 +324,18 @@ export default function Dashboard() {
           </span>
         </div>
         <nav aria-label="Workspace navigation" className="p-3 lg:flex-1">
+          <p className="nav-group-label">Overview</p>
           <div className="mb-4 grid grid-cols-2 gap-1 lg:grid-cols-1">
-            {(
-              [
-                {
-                  id: "overview",
-                  label: "Command center",
-                  Icon: LayoutDashboard,
-                },
-                { id: "migration", label: "Migration planner", Icon: Route },
-              ] as const
-            ).map(({ id, label, Icon }) => (
-              <button
-                key={id}
-                onClick={() => setView(id)}
-                aria-current={view === id ? "page" : undefined}
-                className={`flex items-center gap-3 rounded-md border px-3 py-3 text-xs font-semibold ${view === id ? "border-subtle bg-surface-raised text-foreground" : "border-transparent text-quiet hover:bg-surface-raised"}`}
-              >
-                <Icon size={16} />
-                {label}
-              </button>
-            ))}
+            <button
+              onClick={() => setView("overview")}
+              aria-current={view === "overview" ? "page" : undefined}
+              className={`flex items-center gap-3 rounded-md border px-3 py-3 text-xs font-semibold ${view === "overview" ? "border-subtle bg-surface-raised text-foreground" : "border-transparent text-quiet hover:bg-surface-raised"}`}
+            >
+              <LayoutDashboard size={16} />
+              Command center
+            </button>
           </div>
-          <p className="mb-2 hidden px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-quiet lg:block">
-            Workspace
-          </p>
+          <p className="nav-group-label">Discovery</p>
           <div className="grid grid-cols-3 gap-1 lg:grid-cols-1 lg:gap-1.5">
             {scanTypes.map(({ id, label, description, icon: Icon }) => (
               <button
@@ -378,6 +365,16 @@ export default function Dashboard() {
               </button>
             ))}
           </div>
+          <p className="nav-group-label nav-group-action">Action</p>
+          <button
+            onClick={() => setView("migration")}
+            aria-current={view === "migration" ? "page" : undefined}
+            className={`flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left text-xs font-semibold ${view === "migration" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+          >
+            <Route size={16} />
+            Migration planner
+          </button>
+          <p className="nav-group-label nav-group-action">Reports</p>
           <a
             href="#scan-history"
             onClick={() => setView("scans")}
