@@ -458,6 +458,43 @@ class ScanStore:
     def get_why_migration(self, asset_id: str, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
         return self.graph.get_why_migration(asset_id, project)
 
+    # P5 Temporal Intelligence & Continuous Posture Query Helpers
+    def save_temporal_comparison(self, comparison: Any) -> str:
+        return self.graph.save_temporal_comparison(comparison)
+
+    def get_temporal_comparison(self, project: str, base_scan_id: str, target_scan_id: str) -> Optional[Dict[str, Any]]:
+        return self.graph.get_temporal_comparison(project, base_scan_id, target_scan_id)
+
+    def get_temporal_comparison_by_id(self, comparison_id: str) -> Optional[Dict[str, Any]]:
+        return self.graph.get_temporal_comparison_by_id(comparison_id)
+
+    def save_evidence_timeline(self, timeline: Any) -> str:
+        return self.graph.save_evidence_timeline(timeline)
+
+    def get_evidence_timeline(self, asset_id: str, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self.graph.get_evidence_timeline(asset_id, project)
+
+    def get_evidence_timeline_by_key(self, asset_key: str, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self.graph.get_evidence_timeline_by_key(asset_key, project)
+
+    def save_posture_assessment(self, assessment: Any) -> str:
+        return self.graph.save_posture_assessment(assessment)
+
+    def get_posture_assessment(self, scan_id: str, project: Optional[str] = None, asset_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self.graph.get_posture_assessment(scan_id, project, asset_id)
+
+    def get_posture_assessment_by_id(self, assessment_id: str) -> Optional[Dict[str, Any]]:
+        return self.graph.get_posture_assessment_by_id(assessment_id)
+
+    def get_posture_history(self, asset_id: Optional[str] = None, project: Optional[str] = None) -> List[Dict[str, Any]]:
+        return self.graph.get_posture_history(asset_id, project)
+
+    def save_posture_change(self, change: Any) -> str:
+        return self.graph.save_posture_change(change)
+
+    def get_posture_change(self, base_assessment_id: str, target_assessment_id: str) -> Optional[Dict[str, Any]]:
+        return self.graph.get_posture_change(base_assessment_id, target_assessment_id)
+
     def close(self):
         self.pool.shutdown(wait=True)
 

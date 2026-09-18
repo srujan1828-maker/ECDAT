@@ -180,6 +180,16 @@ class AssetGraphService:
             row = db.execute(query, params).fetchone()
         return CryptoAsset.from_row(row) if row else None
 
+    def get_scan_assets(self, scan_id: str, project: Optional[str] = None) -> List[CryptoAsset]:
+        query = "SELECT * FROM crypto_assets WHERE scan_id = ?"
+        params: List[Any] = [scan_id]
+        if project:
+            query += " AND project = ?"
+            params.append(project)
+        with self.connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return [CryptoAsset.from_row(r) for r in rows]
+
     def upsert_asset(
         self,
         project: str,
@@ -1168,6 +1178,311 @@ class AssetGraphService:
         from .migration.models import MigrationPlan
         plan_obj = MigrationPlan.from_dict(plan_dict)
         return build_migration_explainability_report(plan_obj)
+
+    # ---------------------------------------------------------
+    # P5: Temporal Crypto Intelligence & Posture Persistence
+    # ---------------------------------------------------------
+    def _ensure_temporal_and_posture_tables(self) -> None:
+        with self.connect() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS temporal_comparisons (
+                comparison_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                base_scan_id TEXT NOT NULL,
+                target_scan_id TEXT NOT NULL,
+                base_timestamp TEXT,
+                target_timestamp TEXT,
+                added_count INTEGER NOT NULL DEFAULT 0,
+                removed_count INTEGER NOT NULL DEFAULT 0,
+                changed_count INTEGER NOT NULL DEFAULT 0,
+                unchanged_count INTEGER NOT NULL DEFAULT 0,
+                data TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS evidence_timelines (
+                timeline_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                asset_key TEXT NOT NULL,
+                data TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS posture_assessments (
+                assessment_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                scan_id TEXT NOT NULL,
+                asset_id TEXT,
+                data TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS posture_changes (
+                change_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                base_assessment_id TEXT NOT NULL,
+                target_assessment_id TEXT NOT NULL,
+                asset_id TEXT,
+                data TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )""")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_temp_comp ON temporal_comparisons(project_id, base_scan_id, target_scan_id)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_ev_time_asset ON evidence_timelines(project_id, asset_id)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_ev_time_key ON evidence_timelines(project_id, asset_key)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_posture_proj_scan ON posture_assessments(project_id, scan_id)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_posture_asset ON posture_assessments(asset_id)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_posture_changes ON posture_changes(project_id, base_assessment_id, target_assessment_id)")
+
+    def save_temporal_comparison(self, comparison: Any) -> str:
+        self._ensure_temporal_and_posture_tables()
+        if hasattr(comparison, "to_dict"):
+            data = comparison.to_dict()
+        else:
+            data = dict(comparison)
+        cid = data.get("comparison_id") or f"cmp-{uuid.uuid4().hex[:12]}"
+        project_id = data.get("project_id", "default")
+        base_scan_id = data.get("base_scan_id", "")
+        target_scan_id = data.get("target_scan_id", "")
+        base_ts = data.get("base_timestamp")
+        target_ts = data.get("target_timestamp")
+        added_cnt = data.get("added_count", 0)
+        removed_cnt = data.get("removed_count", 0)
+        changed_cnt = data.get("changed_count", 0)
+        unchanged_cnt = data.get("unchanged_count", 0)
+        created = data.get("created_at") or now_iso()
+
+        with self.connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO temporal_comparisons (
+                    comparison_id, project_id, base_scan_id, target_scan_id,
+                    base_timestamp, target_timestamp, added_count, removed_count,
+                    changed_count, unchanged_count, data, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    cid, project_id, base_scan_id, target_scan_id,
+                    base_ts, target_ts, added_cnt, removed_cnt,
+                    changed_cnt, unchanged_cnt, json.dumps(data), created,
+                ),
+            )
+        return cid
+
+    def get_temporal_comparison(self, project: str, base_scan_id: str, target_scan_id: str) -> Optional[Dict[str, Any]]:
+        self._ensure_temporal_and_posture_tables()
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT data FROM temporal_comparisons
+                   WHERE project_id = ? AND base_scan_id = ? AND target_scan_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (project, base_scan_id, target_scan_id),
+            ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["data"] if hasattr(row, "keys") and "data" in row.keys() else row[0])
+
+    def get_temporal_comparison_by_id(self, comparison_id: str) -> Optional[Dict[str, Any]]:
+        self._ensure_temporal_and_posture_tables()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM temporal_comparisons WHERE comparison_id = ?",
+                (comparison_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["data"] if hasattr(row, "keys") and "data" in row.keys() else row[0])
+
+    def save_evidence_timeline(self, timeline: Any) -> str:
+        self._ensure_temporal_and_posture_tables()
+        if hasattr(timeline, "to_dict"):
+            data = timeline.to_dict()
+        else:
+            data = dict(timeline)
+        tid = data.get("timeline_id") or f"tl-{uuid.uuid4().hex[:12]}"
+        project_id = data.get("project_id", "default")
+        asset_id = data.get("asset_id", "")
+        asset_key = data.get("asset_key", "")
+        created = data.get("created_at") or now_iso()
+
+        with self.connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO evidence_timelines (
+                    timeline_id, project_id, asset_id, asset_key, data, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (tid, project_id, asset_id, asset_key, json.dumps(data), created),
+            )
+        return tid
+
+    def get_evidence_timeline(self, asset_id: str, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        self._ensure_temporal_and_posture_tables()
+        with self.connect() as db:
+            if project:
+                row = db.execute(
+                    """SELECT data FROM evidence_timelines
+                       WHERE asset_id = ? AND project_id = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (asset_id, project),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    """SELECT data FROM evidence_timelines
+                       WHERE asset_id = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (asset_id,),
+                ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["data"] if hasattr(row, "keys") and "data" in row.keys() else row[0])
+
+    def get_evidence_timeline_by_key(self, asset_key: str, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        self._ensure_temporal_and_posture_tables()
+        with self.connect() as db:
+            if project:
+                row = db.execute(
+                    """SELECT data FROM evidence_timelines
+                       WHERE asset_key = ? AND project_id = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (asset_key, project),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    """SELECT data FROM evidence_timelines
+                       WHERE asset_key = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (asset_key,),
+                ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["data"] if hasattr(row, "keys") and "data" in row.keys() else row[0])
+
+    def save_posture_assessment(self, assessment: Any) -> str:
+        self._ensure_temporal_and_posture_tables()
+        if hasattr(assessment, "to_dict"):
+            data = assessment.to_dict()
+        else:
+            data = dict(assessment)
+        aid = data.get("assessment_id") or f"posture-{uuid.uuid4().hex[:12]}"
+        project_id = data.get("project_id", "default")
+        scan_id = data.get("scan_id", "")
+        asset_id = data.get("asset_id")
+        created = data.get("created_at") or now_iso()
+
+        with self.connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO posture_assessments (
+                    assessment_id, project_id, scan_id, asset_id, data, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (aid, project_id, scan_id, asset_id, json.dumps(data), created),
+            )
+        return aid
+
+    def get_posture_assessment(self, scan_id: str, project: Optional[str] = None, asset_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        self._ensure_temporal_and_posture_tables()
+        with self.connect() as db:
+            if asset_id and project:
+                row = db.execute(
+                    """SELECT data FROM posture_assessments
+                       WHERE scan_id = ? AND project_id = ? AND asset_id = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (scan_id, project, asset_id),
+                ).fetchone()
+            elif asset_id:
+                row = db.execute(
+                    """SELECT data FROM posture_assessments
+                       WHERE scan_id = ? AND asset_id = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (scan_id, asset_id),
+                ).fetchone()
+            elif project:
+                row = db.execute(
+                    """SELECT data FROM posture_assessments
+                       WHERE scan_id = ? AND project_id = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (scan_id, project),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    """SELECT data FROM posture_assessments
+                       WHERE scan_id = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (scan_id,),
+                ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["data"] if hasattr(row, "keys") and "data" in row.keys() else row[0])
+
+    def get_posture_assessment_by_id(self, assessment_id: str) -> Optional[Dict[str, Any]]:
+        self._ensure_temporal_and_posture_tables()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM posture_assessments WHERE assessment_id = ?",
+                (assessment_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["data"] if hasattr(row, "keys") and "data" in row.keys() else row[0])
+
+    def get_posture_history(self, asset_id: Optional[str] = None, project: Optional[str] = None) -> List[Dict[str, Any]]:
+        self._ensure_temporal_and_posture_tables()
+        with self.connect() as db:
+            if asset_id and project:
+                rows = db.execute(
+                    """SELECT data FROM posture_assessments
+                       WHERE asset_id = ? AND project_id = ?
+                       ORDER BY created_at ASC""",
+                    (asset_id, project),
+                ).fetchall()
+            elif asset_id:
+                rows = db.execute(
+                    """SELECT data FROM posture_assessments
+                       WHERE asset_id = ?
+                       ORDER BY created_at ASC""",
+                    (asset_id,),
+                ).fetchall()
+            elif project:
+                rows = db.execute(
+                    """SELECT data FROM posture_assessments
+                       WHERE project_id = ?
+                       ORDER BY created_at ASC""",
+                    (project,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT data FROM posture_assessments ORDER BY created_at ASC"
+                ).fetchall()
+        return [json.loads(r["data"] if hasattr(r, "keys") and "data" in r.keys() else r[0]) for r in rows]
+
+    def save_posture_change(self, change: Any) -> str:
+        self._ensure_temporal_and_posture_tables()
+        if hasattr(change, "to_dict"):
+            data = change.to_dict()
+        else:
+            data = dict(change)
+        cid = data.get("change_id") or f"pchange-{uuid.uuid4().hex[:12]}"
+        project_id = data.get("project_id", "default")
+        base_id = data.get("base_assessment_id", "")
+        target_id = data.get("target_assessment_id", "")
+        asset_id = data.get("asset_id")
+        created = data.get("created_at") or now_iso()
+
+        with self.connect() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO posture_changes (
+                    change_id, project_id, base_assessment_id, target_assessment_id,
+                    asset_id, data, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (cid, project_id, base_id, target_id, asset_id, json.dumps(data), created),
+            )
+        return cid
+
+    def get_posture_change(self, base_assessment_id: str, target_assessment_id: str) -> Optional[Dict[str, Any]]:
+        self._ensure_temporal_and_posture_tables()
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT data FROM posture_changes
+                   WHERE base_assessment_id = ? AND target_assessment_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (base_assessment_id, target_assessment_id),
+            ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["data"] if hasattr(row, "keys") and "data" in row.keys() else row[0])
+
 
 
 

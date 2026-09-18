@@ -771,6 +771,184 @@ def get_evaluation_modalities():
     }
 
 
+# =========================================================
+# P5: Temporal Crypto Intelligence & Continuous Posture APIs
+# =========================================================
+
+class TemporalCompareRequest(BaseModel):
+    base_scan_id: str = Field(min_length=1, max_length=100)
+    target_scan_id: str = Field(min_length=1, max_length=100)
+    project: str = Field(default='default', min_length=1, max_length=64)
+
+
+class PostureEvaluateRequest(BaseModel):
+    scan_id: str = Field(default='scan-1', min_length=1, max_length=100)
+    base_scan_id: Optional[str] = Field(default=None, max_length=100)
+    target_scan_id: Optional[str] = Field(default=None, max_length=100)
+    asset_id: Optional[str] = Field(default=None, max_length=100)
+    project: str = Field(default='default', min_length=1, max_length=64)
+
+
+@router.get('/assets/{asset_id}/timeline')
+def get_asset_timeline(asset_id: str, request: Request, project: str = Project):
+    store = request.app.state.store
+    from engine.temporal.pipeline import TemporalPipeline
+    pipeline = TemporalPipeline(store)
+    timeline = pipeline.get_asset_timeline(project, asset_id)
+    if not timeline:
+        raise HTTPException(404, f"Timeline for asset {asset_id} not found")
+    return timeline
+
+
+@router.get('/assets/{asset_id}/changes')
+def get_asset_changes(asset_id: str, request: Request, project: str = Project):
+    store = request.app.state.store
+    from engine.temporal.pipeline import TemporalPipeline
+    pipeline = TemporalPipeline(store)
+    timeline = pipeline.get_asset_timeline(project, asset_id)
+    changes = [e for e in timeline.get("events", []) if e.get("event_type") in ("ALGORITHM_CHANGED", "RISK_CHANGED", "SUPERSEDED", "STALE", "REMOVED")]
+    return {
+        "asset_id": asset_id,
+        "project": project,
+        "change_events": changes,
+        "timeline_summary": timeline.get("current_status"),
+    }
+
+
+@router.get('/assets/{asset_id}/posture')
+def get_asset_posture(asset_id: str, request: Request, project: str = Project):
+    store = request.app.state.store
+    from engine.posture.pipeline import PosturePipeline
+    pipeline = PosturePipeline(store)
+    asset = store.graph.get_asset(asset_id, project)
+    if not asset:
+        raise HTTPException(404, f"Asset {asset_id} not found")
+    scan_id = asset.scan_id or "default"
+    posture = pipeline.evaluate_scan_posture(project, scan_id, asset_id=asset_id)
+    return posture
+
+
+@router.get('/assets/{asset_id}/posture/history')
+def get_asset_posture_history(asset_id: str, request: Request, project: str = Project):
+    store = request.app.state.store
+    from engine.posture.pipeline import PosturePipeline
+    pipeline = PosturePipeline(store)
+    history = pipeline.get_asset_posture_history(project, asset_id)
+    return {
+        "asset_id": asset_id,
+        "project": project,
+        "history_count": len(history),
+        "history": history,
+    }
+
+
+@router.get('/assets/{asset_id}/temporal-risk')
+def get_asset_temporal_risk(asset_id: str, request: Request, project: str = Project):
+    store = request.app.state.store
+    from engine.temporal.temporal_risk import evaluate_temporal_risk
+    asset = store.graph.get_asset(asset_id, project)
+    if not asset:
+        raise HTTPException(404, f"Asset {asset_id} not found")
+    risk = store.graph.get_risk_assessment(asset_id)
+    risk_change, expl = evaluate_temporal_risk(None, risk)
+    return {
+        "asset_id": asset_id,
+        "current_risk": risk,
+        "temporal_risk_change": risk_change.value,
+        "explanation": expl,
+    }
+
+
+@router.get('/assets/{asset_id}/temporal-pqc')
+def get_asset_temporal_pqc(asset_id: str, request: Request, project: str = Project):
+    store = request.app.state.store
+    from engine.temporal.temporal_pqc import evaluate_temporal_pqc
+    asset = store.graph.get_asset(asset_id, project)
+    if not asset:
+        raise HTTPException(404, f"Asset {asset_id} not found")
+    pqc = store.graph.get_pqc_readiness(asset_id)
+    asset_dict = asset.to_dict() if hasattr(asset, "to_dict") else dict(asset)
+    pqc_change, expl = evaluate_temporal_pqc(None, pqc, None, asset_dict)
+    return {
+        "asset_id": asset_id,
+        "current_pqc": pqc,
+        "temporal_pqc_change": pqc_change.value,
+        "explanation": expl,
+    }
+
+
+@router.get('/assets/{asset_id}/temporal-agility')
+def get_asset_temporal_agility(asset_id: str, request: Request, project: str = Project):
+    store = request.app.state.store
+    from engine.temporal.temporal_agility import evaluate_temporal_agility
+    asset = store.graph.get_asset(asset_id, project)
+    if not asset:
+        raise HTTPException(404, f"Asset {asset_id} not found")
+    agility = store.graph.get_agility_assessment(asset_id, asset.scan_id)
+    ag_change, expl = evaluate_temporal_agility(None, agility)
+    return {
+        "asset_id": asset_id,
+        "current_agility": agility,
+        "temporal_agility_change": ag_change.value,
+        "explanation": expl,
+    }
+
+
+@router.get('/assets/{asset_id}/temporal-migration')
+def get_asset_temporal_migration(asset_id: str, request: Request, project: str = Project):
+    store = request.app.state.store
+    from engine.temporal.temporal_migration import evaluate_temporal_migration
+    asset = store.graph.get_asset(asset_id, project)
+    if not asset:
+        raise HTTPException(404, f"Asset {asset_id} not found")
+    plan = store.graph.get_pqc_migration_plan(asset_id)
+    ver = store.graph.get_migration_verification(asset_id)
+    mig_change, expl = evaluate_temporal_migration(plan, ver)
+    return {
+        "asset_id": asset_id,
+        "migration_plan": plan,
+        "migration_verification": ver,
+        "temporal_migration_change": mig_change.value,
+        "explanation": expl,
+    }
+
+
+@router.post('/temporal/compare')
+def post_temporal_compare(req: TemporalCompareRequest, request: Request):
+    store = request.app.state.store
+    from engine.temporal.pipeline import TemporalPipeline
+    pipeline = TemporalPipeline(store)
+    result = pipeline.run_comparison(
+        project=req.project,
+        base_scan_id=req.base_scan_id,
+        target_scan_id=req.target_scan_id,
+    )
+    return result
+
+
+@router.post('/posture/evaluate')
+def post_posture_evaluate(req: PostureEvaluateRequest, request: Request):
+    store = request.app.state.store
+    from engine.posture.pipeline import PosturePipeline
+    pipeline = PosturePipeline(store)
+    if req.base_scan_id and req.target_scan_id:
+        change = pipeline.evaluate_posture_change_between_scans(
+            project=req.project,
+            base_scan_id=req.base_scan_id,
+            target_scan_id=req.target_scan_id,
+            asset_id=req.asset_id,
+        )
+        return change
+    else:
+        assessment = pipeline.evaluate_scan_posture(
+            project=req.project,
+            scan_id=req.scan_id,
+            asset_id=req.asset_id,
+        )
+        return assessment
+
+
+
 app.include_router(router, prefix='/api')
 app.include_router(router)
 app.add_api_route('/', health)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 import re
 
@@ -33,6 +34,63 @@ class CorroborationResult:
     combined_confidence: float
     explanation: str
     contradictions: List[str] = field(default_factory=list)
+
+
+class EvidenceFreshness(str, Enum):
+    CURRENT = "CURRENT"
+    STALE = "STALE"
+    SUPERSEDED = "SUPERSEDED"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class EvidenceLineage:
+    scan_id: str
+    parent_evidence_id: Optional[str] = None
+    superseded_by_id: Optional[str] = None
+    superseded_at: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "scan_id": self.scan_id,
+            "parent_evidence_id": self.parent_evidence_id,
+            "superseded_by_id": self.superseded_by_id,
+            "superseded_at": self.superseded_at,
+            "created_at": self.created_at,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class MultiScanCorroboration:
+    asset_key: str
+    fused_status: CorroborationStatus
+    highest_level: EvidenceLevel
+    combined_confidence: float
+    scan_count: int
+    scans_observed: List[str]
+    freshness: EvidenceFreshness
+    active_evidence_count: int
+    superseded_evidence_count: int
+    explanation: str
+    contradictions: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "asset_key": self.asset_key,
+            "fused_status": self.fused_status.value if hasattr(self.fused_status, "value") else str(self.fused_status),
+            "highest_level": self.highest_level.value if hasattr(self.highest_level, "value") else str(self.highest_level),
+            "combined_confidence": self.combined_confidence,
+            "scan_count": self.scan_count,
+            "scans_observed": self.scans_observed,
+            "freshness": self.freshness.value if hasattr(self.freshness, "value") else str(self.freshness),
+            "active_evidence_count": self.active_evidence_count,
+            "superseded_evidence_count": self.superseded_evidence_count,
+            "explanation": self.explanation,
+            "contradictions": self.contradictions,
+        }
 
 
 def extract_primitive_canonical_name(text: str) -> Tuple[str, Optional[int]]:
@@ -390,3 +448,170 @@ class EvidenceFusionEngine:
                 self.graph.add_evidence(asset.id, ev, project)
             asset_dict["id"] = asset.id
         return asset_dict
+
+    def evaluate_freshness(
+        self,
+        evidence: Evidence,
+        as_of_time: Optional[datetime | str] = None,
+        ttl_days: int = 90,
+    ) -> EvidenceFreshness:
+        """
+        Evaluates evidence freshness against a point in time.
+        NEVER mutates evidence.state.
+        """
+        if getattr(evidence, "lineage", None) and getattr(evidence.lineage, "superseded_by_id", None):
+            return EvidenceFreshness.SUPERSEDED
+        if isinstance(evidence.raw_details, dict):
+            if evidence.raw_details.get("superseded_by") or evidence.raw_details.get("is_superseded"):
+                return EvidenceFreshness.SUPERSEDED
+
+        # Resolve as_of_time
+        if as_of_time is None:
+            as_of = datetime.now(timezone.utc)
+        elif isinstance(as_of_time, str):
+            try:
+                as_of = datetime.fromisoformat(as_of_time.replace("Z", "+00:00"))
+            except Exception:
+                as_of = datetime.now(timezone.utc)
+        else:
+            as_of = as_of_time
+
+        if as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=timezone.utc)
+
+        ts_str = getattr(evidence, "timestamp", None)
+        if not ts_str and isinstance(evidence.raw_details, dict):
+            ts_str = evidence.raw_details.get("timestamp")
+
+        if not ts_str:
+            return EvidenceFreshness.UNKNOWN
+
+        try:
+            ev_dt = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
+            if ev_dt.tzinfo is None:
+                ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return EvidenceFreshness.UNKNOWN
+
+        delta = as_of - ev_dt
+        if delta.days > ttl_days:
+            return EvidenceFreshness.STALE
+        return EvidenceFreshness.CURRENT
+
+    def track_supersession(
+        self,
+        old_evidence: Evidence,
+        new_evidence: Evidence,
+    ) -> EvidenceLineage:
+        """
+        Tracks evidence supersession cleanly without mutating old_evidence.state.
+        """
+        now_ts = datetime.now(timezone.utc).isoformat()
+        if not isinstance(old_evidence.raw_details, dict):
+            old_evidence.raw_details = {}
+        old_evidence.raw_details["superseded_by"] = new_evidence.id
+        old_evidence.raw_details["superseded_at"] = now_ts
+
+        lineage = EvidenceLineage(
+            scan_id=getattr(new_evidence, "scan_id", None) or getattr(old_evidence, "scan_id", None) or "unknown",
+            parent_evidence_id=old_evidence.id,
+            superseded_by_id=new_evidence.id,
+            superseded_at=now_ts,
+            created_at=getattr(old_evidence, "timestamp", None) or now_ts,
+            metadata={"superseded_reason": "newer_observation"},
+        )
+        return lineage
+
+    def corroborate_multi_scan(
+        self,
+        project: str,
+        asset_key: str,
+        scans: List[Dict[str, Any]],
+        as_of_time: Optional[datetime | str] = None,
+        ttl_days: int = 90,
+    ) -> MultiScanCorroboration:
+        """
+        Corroborates evidence for a given asset_key across multiple scans.
+        Considers freshness and supersession without mutating evidence states.
+        """
+        all_evidence: List[Evidence] = []
+        scans_observed: List[str] = []
+
+        for scan_entry in scans:
+            scan_id = scan_entry.get("scan_id") or scan_entry.get("id") or "unknown"
+            items = scan_entry.get("evidence") or scan_entry.get("evidence_items") or []
+            matched = False
+            for it in items:
+                ev: Optional[Evidence] = None
+                if isinstance(it, Evidence):
+                    ev = it
+                elif isinstance(it, dict):
+                    # Convert dict to Evidence if possible
+                    try:
+                        ev = Evidence.from_dict(it)
+                    except Exception:
+                        pass
+                if ev:
+                    # Check if evidence matches asset_key or is relevant dynamic protocol observation
+                    ev_text = f"{ev.symbol or ''} {ev.description or ''} {(ev.raw_details.get('asset_key', '') if isinstance(ev.raw_details, dict) else '')}".lower()
+                    key_target = asset_key.strip().lower()
+                    if not key_target or key_target in ev_text or ev_text in key_target or ev.observation_type in (ObservationType.TLS_NEGOTIATION, ObservationType.PQC_NEGOTIATION):
+                        all_evidence.append(ev)
+                        matched = True
+            if matched and scan_id not in scans_observed:
+                scans_observed.append(scan_id)
+
+        active_evidence: List[Evidence] = []
+        superseded_count = 0
+        current_count = 0
+        stale_count = 0
+
+        for ev in all_evidence:
+            fr = self.evaluate_freshness(ev, as_of_time=as_of_time, ttl_days=ttl_days)
+            if fr == EvidenceFreshness.SUPERSEDED:
+                superseded_count += 1
+            else:
+                active_evidence.append(ev)
+                if fr == EvidenceFreshness.CURRENT:
+                    current_count += 1
+                elif fr == EvidenceFreshness.STALE:
+                    stale_count += 1
+
+        if not all_evidence:
+            overall_freshness = EvidenceFreshness.UNKNOWN
+        elif current_count > 0:
+            overall_freshness = EvidenceFreshness.CURRENT
+        elif stale_count > 0:
+            overall_freshness = EvidenceFreshness.STALE
+        elif superseded_count > 0:
+            overall_freshness = EvidenceFreshness.SUPERSEDED
+        else:
+            overall_freshness = EvidenceFreshness.UNKNOWN
+
+        evidence_to_fuse = active_evidence if active_evidence else all_evidence
+        corrob_result = self.compute_corroboration(evidence_to_fuse)
+
+        multi_explanation = (
+            f"Multi-Scan Corroboration for {asset_key}: observed in {len(scans_observed)} scan(s) "
+            f"({current_count} current, {stale_count} stale, {superseded_count} superseded). "
+            f"Overall Freshness: {overall_freshness.value}.\n"
+            f"{corrob_result.explanation}"
+        )
+
+        return MultiScanCorroboration(
+            asset_key=asset_key,
+            fused_status=corrob_result.fused_status,
+            highest_level=corrob_result.highest_level,
+            combined_confidence=corrob_result.combined_confidence,
+            scan_count=len(scans_observed),
+            scans_observed=scans_observed,
+            freshness=overall_freshness,
+            active_evidence_count=len(active_evidence),
+            superseded_evidence_count=superseded_count,
+            explanation=multi_explanation,
+            contradictions=corrob_result.contradictions,
+        )
+
+
+CorroborationEngine = EvidenceFusionEngine
+
