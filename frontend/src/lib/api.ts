@@ -34,6 +34,24 @@ export type Finding = {
   description?: string;
   engine?: string;
 };
+export type PcapSession = {
+  client_ip: string;
+  server_ip: string;
+  client_port: number;
+  server_port: number;
+  sni?: string;
+  tls_version?: string;
+  offered_ciphers?: string[];
+  selected_cipher?: string;
+  supported_groups?: string[];
+  selected_group?: string;
+  ja3_string?: string;
+  ja3_fingerprint?: string;
+  ja4_fingerprint?: string;
+  has_pqc_hybrid?: boolean;
+  is_quantum_vulnerable?: boolean;
+};
+
 export type ScanResult = {
   findings?: Finding[];
   detections?: Finding[];
@@ -65,6 +83,13 @@ export type ScanResult = {
   protocol_tests?: unknown[];
   cipher_tests?: unknown[];
   members?: unknown[];
+  sessions?: PcapSession[];
+  packets_analyzed?: number;
+  tls_handshakes_detected?: number;
+  pqc_sessions_count?: number;
+  quantum_vulnerable_count?: number;
+  evidence_records?: EvidenceRecord[];
+  summary?: Record<string, unknown>;
 };
 export type Scan = {
   id: string;

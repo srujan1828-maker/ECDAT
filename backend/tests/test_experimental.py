@@ -139,3 +139,19 @@ def test_api_experimental_endpoints(client):
     })
     assert res_patch.status_code == 200
     assert res_patch.json()["verification_status"] == "passed"
+
+    # Test direct pcap analysis endpoint
+    res_pcap = client.post("/api/experimental/pcap", json={"with_pqc_hybrid": True})
+    assert res_pcap.status_code == 200
+    assert res_pcap.json()["packets_analyzed"] == 2
+    assert len(res_pcap.json()["sessions"]) == 1
+
+    # Test sih-flow endpoint with both GET and POST
+    res_sih_post = client.post("/api/demo/sih-flow")
+    assert res_sih_post.status_code == 200
+    assert res_sih_post.json()["status"] == "completed"
+
+    res_sih_get = client.get("/api/demo/sih-flow")
+    assert res_sih_get.status_code == 200
+    assert res_sih_get.json()["total_steps"] == 10
+

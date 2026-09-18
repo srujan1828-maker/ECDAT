@@ -16,6 +16,10 @@ import {
   ShieldAlert,
   Loader2,
   ExternalLink,
+  Upload,
+  Copy,
+  Check,
+  ShieldCheck,
 } from "lucide-react";
 import {
   requestApi,
@@ -165,18 +169,45 @@ export function ExperimentalHub({ project, token }: ExperimentalHubProps) {
     }
   }
 
-  async function handleRunSyntheticPcap() {
+  const [pcapCopied, setPcapCopied] = useState<string | null>(null);
+
+  async function handleRunSyntheticPcap(withPqc: boolean = true) {
     setLoadingPcap(true);
     try {
-      // Trigger SIH demo or PCAP analyzer
-      const res = await requestApi<any>("/demo/sih-flow", project, token);
-      setPcapResult(res.steps[9]?.data || res);
+      const res = await requestApi<any>("/experimental/pcap", project, token, {
+        with_pqc_hybrid: withPqc,
+      });
+      setPcapResult(res);
     } catch (err: any) {
-      alert(err.message);
+      alert(err.message || "PCAP analysis failed");
     } finally {
       setLoadingPcap(false);
     }
   }
+
+  async function handleUploadPcap(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoadingPcap(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let hex = "";
+      for (let i = 0; i < bytes.length; i++) {
+        hex += bytes[i].toString(16).padStart(2, "0");
+      }
+      const res = await requestApi<any>("/experimental/pcap", project, token, {
+        raw_hex: hex,
+        file_name: file.name,
+      });
+      setPcapResult(res);
+    } catch (err: any) {
+      alert(err.message || "Failed to analyze PCAP file");
+    } finally {
+      setLoadingPcap(false);
+    }
+  }
+
 
   async function handleClassifyBinary() {
     setLoadingBinary(true);
@@ -597,29 +628,226 @@ export function ExperimentalHub({ project, token }: ExperimentalHubProps) {
             </h3>
             <p className="text-sm text-quiet">
               Extracts ClientHello, ServerHello, supported curves/groups, and JA3/JA4 fingerprints from
-              authorized packet captures without active port probing.
+              authorized packet captures without active port probing. Supports TLS 1.2, TLS 1.3, and
+              FIPS 203 ML-KEM hybrid key exchanges.
             </p>
 
-            <button
-              onClick={handleRunSyntheticPcap}
-              disabled={loadingPcap}
-              className="ec-button flex items-center gap-2"
-            >
-              {loadingPcap ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
-              Run Passive PCAP Dissection Demo
-            </button>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <button
+                onClick={() => handleRunSyntheticPcap(true)}
+                disabled={loadingPcap}
+                className="ec-button flex items-center gap-2"
+              >
+                {loadingPcap ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
+                Simulate PQC Hybrid Handshake (X25519MLKEM768)
+              </button>
+
+              <button
+                onClick={() => handleRunSyntheticPcap(false)}
+                disabled={loadingPcap}
+                className="ec-button secondary flex items-center gap-2"
+              >
+                {loadingPcap ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
+                Simulate Classical Handshake (secp256r1)
+              </button>
+
+              <label className="ec-button secondary flex items-center gap-2 cursor-pointer">
+                <Upload size={16} />
+                <span>Upload PCAP File</span>
+                <input
+                  type="file"
+                  accept=".pcap,.cap,.pcapng"
+                  className="hidden"
+                  onChange={handleUploadPcap}
+                  disabled={loadingPcap}
+                />
+              </label>
+            </div>
           </div>
 
           {pcapResult && (
-            <div className="rounded-lg border border-subtle bg-surface p-5 space-y-3">
-              <span className="text-sm font-bold text-foreground">Dissected TLS Sessions</span>
-              <pre className="p-3 rounded bg-canvas border border-subtle text-xs font-mono text-foreground overflow-x-auto">
-                {JSON.stringify(pcapResult, null, 2)}
-              </pre>
+            <div className="space-y-4">
+              {/* Metric Badges */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center text-xs">
+                <div className="p-3 rounded-lg bg-surface border border-subtle">
+                  <div className="text-quiet mb-1">Packets Analyzed</div>
+                  <div className="text-lg font-bold text-foreground">
+                    {pcapResult.packets_analyzed ?? 0}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-surface border border-subtle">
+                  <div className="text-quiet mb-1">TLS Handshakes</div>
+                  <div className="text-lg font-bold text-cyan-400">
+                    {pcapResult.tls_handshakes_detected ?? 0}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-surface border border-subtle">
+                  <div className="text-quiet mb-1">PQC Hybrid Sessions</div>
+                  <div className="text-lg font-bold text-emerald-400">
+                    {pcapResult.pqc_sessions_count ?? 0}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-surface border border-subtle">
+                  <div className="text-quiet mb-1">Quantum Vulnerable</div>
+                  <div className="text-lg font-bold text-amber-400">
+                    {pcapResult.quantum_vulnerable_count ?? 0}
+                  </div>
+                </div>
+              </div>
+
+              {/* Sessions Breakdown */}
+              {Array.isArray(pcapResult.sessions) && pcapResult.sessions.length > 0 && (
+                <div className="rounded-lg border border-subtle bg-surface p-5 space-y-4">
+                  <h4 className="font-semibold text-sm text-foreground flex items-center gap-2">
+                    <Radio size={16} className="text-cyan-400" />
+                    Dissected Handshake Sessions ({pcapResult.sessions.length})
+                  </h4>
+
+                  <div className="space-y-3">
+                    {pcapResult.sessions.map((sess: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className="p-4 rounded-lg border border-subtle bg-canvas space-y-3 text-xs"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle pb-2">
+                          <div className="font-mono text-foreground font-semibold flex items-center gap-2">
+                            <span>{sess.client_ip}:{sess.client_port}</span>
+                            <span className="text-quiet">➔</span>
+                            <span className="text-cyan-400">{sess.server_ip}:{sess.server_port}</span>
+                            {sess.sni && (
+                              <span className="px-2 py-0.5 rounded bg-surface border border-subtle text-quiet text-[11px]">
+                                SNI: {sess.sni}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {sess.has_pqc_hybrid ? (
+                              <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-semibold border border-emerald-500/20 flex items-center gap-1">
+                                <ShieldCheck size={12} /> Post-Quantum Hybrid
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-semibold border border-amber-500/20 flex items-center gap-1">
+                                <ShieldAlert size={12} /> Classical Only
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[12px]">
+                          <div>
+                            <span className="text-quiet block mb-0.5 font-medium">Negotiated Cipher Suite:</span>
+                            <span className="font-mono text-foreground font-semibold">
+                              {sess.selected_cipher || "N/A"}
+                            </span>
+                          </div>
+
+                          <div>
+                            <span className="text-quiet block mb-0.5 font-medium">Key Exchange Groups:</span>
+                            <div className="flex flex-wrap gap-1">
+                              {sess.supported_groups?.map((g: string, gIdx: number) => (
+                                <span
+                                  key={gIdx}
+                                  className={`font-mono px-1.5 py-0.5 rounded text-[11px] ${
+                                    g.includes("MLKEM")
+                                      ? "bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/30"
+                                      : "bg-surface text-quiet border border-subtle"
+                                  }`}
+                                >
+                                  {g}
+                                </span>
+                              )) || <span className="text-quiet">None detected</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Fingerprints */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-subtle/50 text-[11px]">
+                          {sess.ja3_fingerprint && (
+                            <div className="flex items-center justify-between p-2 rounded bg-surface border border-subtle">
+                              <div className="truncate mr-2">
+                                <span className="text-quiet font-bold">JA3: </span>
+                                <span className="font-mono text-cyan-400">{sess.ja3_fingerprint}</span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(sess.ja3_fingerprint);
+                                  setPcapCopied(`ja3-${idx}`);
+                                  setTimeout(() => setPcapCopied(null), 1500);
+                                }}
+                                className="text-quiet hover:text-foreground p-1"
+                                title="Copy JA3"
+                              >
+                                {pcapCopied === `ja3-${idx}` ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                              </button>
+                            </div>
+                          )}
+
+                          {sess.ja4_fingerprint && (
+                            <div className="flex items-center justify-between p-2 rounded bg-surface border border-subtle">
+                              <div className="truncate mr-2">
+                                <span className="text-quiet font-bold">JA4: </span>
+                                <span className="font-mono text-emerald-400">{sess.ja4_fingerprint}</span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(sess.ja4_fingerprint);
+                                  setPcapCopied(`ja4-${idx}`);
+                                  setTimeout(() => setPcapCopied(null), 1500);
+                                }}
+                                className="text-quiet hover:text-foreground p-1"
+                                title="Copy JA4"
+                              >
+                                {pcapCopied === `ja4-${idx}` ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Evidence Records */}
+              {Array.isArray(pcapResult.evidence_records) && pcapResult.evidence_records.length > 0 && (
+                <div className="rounded-lg border border-subtle bg-surface p-5 space-y-3">
+                  <h4 className="font-semibold text-sm text-foreground flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-emerald-400" />
+                    Generated Evidence Records ({pcapResult.evidence_records.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {pcapResult.evidence_records.map((ev: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className="p-3 rounded bg-canvas border border-subtle flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-2"
+                      >
+                        <div>
+                          <span className="font-mono font-bold text-cyan-400">{ev.algorithm}</span>
+                          <span className="text-quiet ml-2">({ev.cryptographic_role})</span>
+                          <p className="text-quiet text-[11px] mt-0.5">{ev.description}</p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded bg-surface border border-subtle text-quiet text-[11px] self-start sm:self-center">
+                          Confidence: {ev.confidence}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Raw JSON */}
+              <div className="rounded-lg border border-subtle bg-surface p-5 space-y-3">
+                <span className="text-sm font-bold text-foreground">Raw PCAP Dissection Payload</span>
+                <pre className="p-3 rounded bg-canvas border border-subtle text-xs font-mono text-foreground overflow-x-auto max-h-72">
+                  {JSON.stringify(pcapResult, null, 2)}
+                </pre>
+              </div>
             </div>
           )}
         </div>
       )}
+
 
       {/* Tab: Binary ML */}
       {activeTab === "binary_ml" && (

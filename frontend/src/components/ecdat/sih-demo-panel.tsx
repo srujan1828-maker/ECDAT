@@ -24,20 +24,23 @@ interface SihDemoPanelProps {
 export function SihDemoPanel({ project, token }: SihDemoPanelProps) {
   const [demoResult, setDemoResult] = useState<SihDemoExecution | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<number>(1);
 
   async function handleRunDemo() {
     setLoading(true);
+    setError(null);
     try {
-      const res = await requestApi<SihDemoExecution>("/demo/sih-flow", project, token);
+      const res = await requestApi<SihDemoExecution>("/demo/sih-flow", project, token, {});
       setDemoResult(res);
       setActiveStep(1);
     } catch (err: any) {
-      alert(err.message);
+      setError(err?.message || "Failed to execute SIH demonstration flow");
     } finally {
       setLoading(false);
     }
   }
+
 
   const stepIcons = [
     FileCode,        // Step 1
@@ -77,8 +80,23 @@ export function SihDemoPanel({ project, token }: SihDemoPanelProps) {
         </button>
       </div>
 
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-950/20 p-4 text-sm text-red-400 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold">Execution error:</span> {error}
+          </div>
+          <button
+            onClick={handleRunDemo}
+            className="text-xs font-semibold underline hover:no-underline ml-4 text-red-300"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Demo Results Viewer */}
       {demoResult && (
+
         <div className="space-y-6">
           {/* Top Status Banner */}
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/10 p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">

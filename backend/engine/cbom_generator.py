@@ -11,6 +11,9 @@ def generate_cyclonedx_cbom(records, target_name='ECDAT Project'):
         evidence = result.get('findings', result.get('detections', []))
         if record['kind'] == 'network':
             evidence = [{'primitive': result['cipher_name'], 'category': 'TLS cipher observation', 'file': result['target'], 'issue': result['hndl_rationale']}]
+        elif record['kind'] == 'pcap':
+            evidence = [{'primitive': s.get('selected_cipher') or s.get('cipher_suite', 'TLS Session'), 'category': 'Passive PCAP TLS observation', 'file': f"{s.get('server_ip')}:{s.get('server_port', 443)}", 'issue': f"Observed TLS Handshake via PCAP (JA4: {s.get('ja4_fingerprint', 'N/A')})"} for s in result.get('sessions', [])]
+
         for i, finding in enumerate(evidence):
             primitive = finding.get('primitive', 'Unknown')
             upper = primitive.upper()

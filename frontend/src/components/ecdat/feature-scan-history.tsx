@@ -19,13 +19,14 @@ import {
   FileText,
   Copy,
   Check,
+  Radio,
 } from "lucide-react";
 import { Scan, Finding } from "@/lib/api";
 
 const panelClass = "min-w-0 rounded-lg border border-subtle bg-surface";
 
 interface FeatureScanHistoryProps {
-  mode: "network" | "code" | "binary";
+  mode: "network" | "code" | "binary" | "pcap";
   scans: Scan[];
   selectedId: string | null;
   onSelectScan: (id: string) => void;
@@ -67,7 +68,18 @@ const kindMeta = {
     emptyHelp:
       "Upload an ELF, PE, raw firmware binary, or ZIP archive above to inspect embedded cryptographic signatures.",
   },
+  pcap: {
+    label: "Passive PCAP Scan",
+    plural: "Passive PCAP scans",
+    icon: Radio,
+    title: "Passive PCAP History & Dissected TLS Handshakes",
+    subtitle:
+      "Historical record of passively dissected TLS handshakes, ML-KEM post-quantum hybrid sessions, and JA3/JA4 fingerprints from network traffic captures.",
+    emptyHelp:
+      "Upload a .pcap file or trigger synthetic traffic above to passively inspect TLS sessions without active probing.",
+  },
 } as const;
+
 
 function StatusBadge({ status }: { status: Scan["status"] }) {
   const color =
@@ -723,8 +735,74 @@ export function FeatureScanHistory({
                       </div>
                     )}
 
+                    {/* 4. PCAP SPECIFIC SESSIONS */}
+                    {mode === "pcap" && (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between border-b border-subtle pb-2">
+                          <span className="text-xs font-semibold text-foreground">
+                            Dissected TLS Handshake Sessions (
+                            {(activeScan.result.sessions || []).length})
+                          </span>
+                          <span className="text-[11px] text-quiet">
+                            Passive capture analysis & JA4
+                          </span>
+                        </div>
+
+                        {!(activeScan.result.sessions || []).length ? (
+                          <div className="rounded border border-subtle p-6 text-center text-quiet text-xs">
+                            <CheckCircle2 size={20} className="mx-auto mb-1 text-emerald-400" />
+                            No TLS handshakes detected in this packet capture.
+                          </div>
+                        ) : (
+                          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                            {(activeScan.result.sessions || []).map(
+                              (sess: any, idx: number) => (
+                                <div
+                                  key={idx}
+                                  className="rounded-md border border-subtle bg-canvas/50 p-3.5 space-y-2 text-xs"
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-mono text-xs font-bold text-foreground flex items-center gap-2">
+                                      <Radio size={14} className="text-cyan-400" />
+                                      {sess.client_ip}:{sess.client_port} ➔ {sess.server_ip}:{sess.server_port}
+                                    </span>
+                                    {sess.has_pqc_hybrid ? (
+                                      <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-mono text-emerald-400">
+                                        PQC Hybrid
+                                      </span>
+                                    ) : (
+                                      <span className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-mono text-amber-400">
+                                        Classical Only
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-quiet">
+                                    <div>
+                                      Cipher: <span className="text-foreground">{sess.selected_cipher || "N/A"}</span>
+                                    </div>
+                                    <div>
+                                      SNI: <span className="text-foreground">{sess.sni || "N/A"}</span>
+                                    </div>
+                                  </div>
+
+                                  {sess.ja4_fingerprint && (
+                                    <div className="text-[11px] font-mono text-quiet flex items-center gap-2">
+                                      <span>JA4:</span>
+                                      <span className="text-emerald-400">{sess.ja4_fingerprint}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Complete JSON evidence accordion */}
                     <details className="rounded-md border border-subtle">
+
                       <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium text-quiet hover:text-foreground">
                         Raw Evidence Record & CycloneDX CBOM Mapping
                       </summary>

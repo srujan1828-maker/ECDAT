@@ -26,10 +26,10 @@ class KnowledgeBaseVersion:
 
 | Source ID | File Name | Content Type | Version | Items Count | SHA-256 Digest |
 |:---|:---|:---|:---:|:---:|:---|
-| `algorithm_security` | `algorithm_security.yaml` | Algorithms & Aliases | 2024.1 | 32 | `2dc9b2db5b9b004489a6689941fc56be239165e0894a24ccaf5e8d435b4995ba` |
-| `pqc_migration_knowledge` | `pqc_migration_knowledge.yaml` | PQC Mappings | 2024.1 | 6 | `9e023af8db14f9382c107cfee373a7a7258f818d38c23596264706dff71c0ee2` |
-| `protocol_security` | `protocol_security.yaml` | Protocol Rules | 2024.1 | 8 | `5248d3fefedee9fb165c01f8f76525ddda34a5ba81ded479dbf764dde3614a47` |
-| `crypto_risk_rules` | `crypto_risk_rules.yaml` | Risk Rules | — | 15 | `44fcd4883d09a74e8911ba946deb20d4b7da701c5ecdc1a0be325abe2c041c1a` |
+| `algorithm_security` | `algorithm_security.yaml` | Algorithms & Aliases | 2024.1 | 32 | `d78dd6970536dc2e9b5b14556ec251fad6133f731f5f5f6449f64bc51d886096` |
+| `pqc_migration_knowledge` | `pqc_migration_knowledge.yaml` | PQC Mappings | 2024.1 | 6 | `55997b2ccc053b060430f2d8f5864616e55d6d55a3ef5b77b8e25fce7adab4f2` |
+| `protocol_security` | `protocol_security.yaml` | Protocol Rules | 2024.1 | 8 | `c2fdcc38a0e211a55360f56e921616f7f7674af115bab10f60072b8ae4070a9d` |
+| `crypto_risk_rules` | `crypto_risk_rules.yaml` | Risk Rules | — | 15 | `078c64358b682c61bb93425def445bb05d502518edd6563a2279f75e59b20f8e` |
 | `crypto_agility_rules` | `crypto_agility_rules.yaml` | Agility Rules | 2024.1 | 28 | `5cdf6296e3e32d03f3f166b70a2f4a25e454bc471e8ad3fa31ee7f57208d3199` |
 | `blast_radius_rules` | `blast_radius_rules.yaml` | Blast Radius Rules | — | 20 | `c6605d6b5a8f890f03b9fb2fe700c4ba78bb171caf7342ea77a4df144da37f34` |
 | `crypto_sinks` | `crypto_sinks.yaml` | API Sink Definitions | 4.0.0 | 39 | `7bee8f3624985e2a8ae6e60180c9a28632385c74f17e636cc2d7e349fec8ced4` |

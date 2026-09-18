@@ -44,7 +44,10 @@ from backend.engine.treesitter_scanner import ConstructType, get_treesitter_scan
 
 @pytest.fixture
 def ts_scanner():
-    return get_treesitter_scanner()
+    scanner = get_treesitter_scanner()
+    if not scanner.is_available("python"):
+        pytest.skip("Tree-sitter parser is not available in this environment")
+    return scanner
 
 
 @pytest.fixture
@@ -178,7 +181,7 @@ class CryptoService {
     assert f["constant_provenance"]["resolved_value"] == "AES/GCM/NoPadding"
 
 
-def test_case_i_cross_file_constant():
+def test_case_i_cross_file_constant(ts_scanner):
     """I. CROSS-FILE CONSTANT: file A defines ALGO; file B invokes Cipher.getInstance(ALGO)."""
     file_a = {
         "path": "config.py",
@@ -614,7 +617,7 @@ def run2(): return h.sha256(b"two")
 # SECTION 14: PERFORMANCE & BENCHMARKING
 # ==============================================================================
 
-def test_performance_linear_scaling():
+def test_performance_linear_scaling(ts_scanner):
     """Benchmarks 10, 100, and 500 files to ensure O(N) linear time scaling without quadratic behavior."""
     def make_file(idx):
         return {

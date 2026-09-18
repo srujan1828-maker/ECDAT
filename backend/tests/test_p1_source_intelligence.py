@@ -40,7 +40,10 @@ from backend.engine.treesitter_scanner import ConstructType, get_treesitter_scan
 
 @pytest.fixture
 def ts_scanner():
-    return get_treesitter_scanner()
+    scanner = get_treesitter_scanner()
+    if not scanner.is_available("python"):
+        pytest.skip("Tree-sitter parser is not available in this environment")
+    return scanner
 
 
 @pytest.fixture

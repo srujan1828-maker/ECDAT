@@ -28,7 +28,7 @@ import Link from "next/link";
 import { ThemeToggle } from "@/components/ecdat/theme-toggle";
 import { Overview } from "@/components/ecdat/overview";
 import { MigrationPlanner } from "@/components/ecdat/migration-planner";
-import { LayoutDashboard, Route, FlaskConical, Scale, FileCheck2, PlayCircle } from "lucide-react";
+import { LayoutDashboard, Route, FlaskConical, Scale, FileCheck2, PlayCircle, Radio } from "lucide-react";
 import { VerificationPanel } from "@/components/ecdat/verification-panel";
 import { StandardsPanel } from "@/components/ecdat/standards-panel";
 import { ExperimentalHub } from "@/components/ecdat/experimental-hub";
@@ -79,7 +79,21 @@ const scanTypes = [
       "ZIP contents and scan coverage",
     ],
   },
+  {
+    id: "pcap",
+    label: "Passive PCAP",
+    description: "Packet captures & dumps",
+    icon: Radio,
+    title: "Inspect packet captures & TLS sessions",
+    help: "Upload a PCAP capture file or analyze synthetic PQC traffic to dissect TLS handshakes and JA3/JA4 fingerprints without active probing.",
+    checks: [
+      "ClientHello & ServerHello dissection",
+      "FIPS 203 ML-KEM hybrid key exchange",
+      "JA3 & JA4 fingerprint extraction",
+    ],
+  },
 ] as const;
+
 const kindLabels: Record<string, string> = {
   network: "Network",
   code: "Code",
@@ -146,12 +160,14 @@ export default function Dashboard() {
   const [projectInput, setProjectInput] = useState("default");
   const [project, setProject] = useState("default");
   const [token, setToken] = useState("");
-  const [mode, setMode] = useState<"network" | "code" | "binary">("network");
+  const [mode, setMode] = useState<"network" | "code" | "binary" | "pcap">("network");
   const [target, setTarget] = useState("");
   const [language, setLanguage] = useState("python");
   const [code, setCode] = useState("");
   const [sourceFiles, setSourceFiles] = useState<File[]>([]);
   const [binary, setBinary] = useState<File | null>(null);
+  const [pcapFile, setPcapFile] = useState<File | null>(null);
+  const [pcapPqcHybrid, setPcapPqcHybrid] = useState(true);
   const [scans, setScans] = useState<Scan[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -171,11 +187,12 @@ export default function Dashboard() {
       else if (hash === "experimental") setView("experimental");
       else if (hash === "sih_demo" || hash === "sih-demo") setView("sih_demo");
       else if (hash === "history") setView("history");
-      else if (["network", "code", "binary"].includes(hash)) {
-        setMode(hash as "network" | "code" | "binary");
+      else if (["network", "code", "binary", "pcap"].includes(hash)) {
+        setMode(hash as "network" | "code" | "binary" | "pcap");
         setView("scans");
       }
     }
+
     readHash();
     window.addEventListener("hashchange", readHash);
     return () => window.removeEventListener("hashchange", readHash);
@@ -236,7 +253,20 @@ export default function Dashboard() {
         const form = new FormData();
         form.append("file", binary);
         body = form;
+      } else if (mode === "pcap") {
+        if (pcapFile) {
+          if (pcapFile.size === 0 || pcapFile.size > 8 * 1024 * 1024)
+            throw new Error("PCAP file must contain 1 byte to 8 MiB.");
+          path = "/scan/pcap/upload";
+          const form = new FormData();
+          form.append("file", pcapFile);
+          body = form;
+        } else {
+          path = "/scan/pcap/synthetic";
+          body = { with_pqc_hybrid: pcapPqcHybrid };
+        }
       } else {
+
         path = "/scan/sources";
         if (
           sourceFiles.length > 100 ||
@@ -568,10 +598,12 @@ export default function Dashboard() {
                   if (
                     targetScan.kind === "network" ||
                     targetScan.kind === "code" ||
-                    targetScan.kind === "binary"
+                    targetScan.kind === "binary" ||
+                    targetScan.kind === "pcap"
                   ) {
                     setMode(targetScan.kind);
                   }
+
                 }
                 setSelected(id);
                 setView("scans");
@@ -848,6 +880,56 @@ export default function Dashboard() {
                         )}
                       </label>
                     )}
+                    {mode === "pcap" && (
+                      <div className="space-y-4">
+                        <label className="block min-w-0 rounded-md border border-dashed border-slate-600 bg-canvas/50 p-6">
+                          <Radio size={24} className="mb-3 text-teal" />
+                          <span className="block text-sm font-medium">
+                            Choose your PCAP capture file
+                          </span>
+                          <span className="mt-1 block text-xs text-quiet">
+                            .pcap, .cap, .pcapng · up to 8 MiB
+                          </span>
+                          <input
+                            type="file"
+                            accept=".pcap,.cap,.pcapng"
+                            aria-label="PCAP file"
+                            className="mt-4 block w-full min-w-0 text-xs text-quiet file:mr-3 file:rounded-md file:border-0 file:bg-surface-raised file:px-3 file:py-2 file:text-foreground"
+                            onChange={(e) =>
+                              setPcapFile(e.target.files?.[0] || null)
+                            }
+                          />
+                          {pcapFile && (
+                            <span className="mt-3 block break-all text-xs text-teal">
+                              Ready: {pcapFile.name} ({(pcapFile.size / 1024).toFixed(1)} KB)
+                            </span>
+                          )}
+                        </label>
+
+                        <div className="rounded-md border border-subtle bg-canvas/50 p-4 text-xs space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-foreground">
+                              {pcapFile ? "File capture mode active" : "Or run synthetic PQC network capture"}
+                            </span>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={pcapPqcHybrid}
+                                onChange={(e) => setPcapPqcHybrid(e.target.checked)}
+                                className="rounded border-subtle bg-canvas text-cyan-400"
+                              />
+                              <span className="text-[11px] text-quiet">Include FIPS 203 ML-KEM hybrid key exchange</span>
+                            </label>
+                          </div>
+                          <p className="text-[11px] text-quiet">
+                            {pcapFile
+                              ? "Will extract ClientHello, ServerHello, and JA3/JA4 fingerprints from your uploaded packet capture."
+                              : "No capture hardware needed. ECDAT generates realistic TLS 1.3 traffic to test passive hybrid discovery and JA4 fingerprinting."}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle pt-4">
                       <p className="text-[11px] text-quiet">
                         Results appear below when ready.

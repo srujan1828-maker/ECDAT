@@ -579,7 +579,10 @@ def overview(request: Request, project: str = Project):
         result = record['result']
         evidence = result.get('findings', result.get('detections', []))
         if record['kind'] == 'network':
-            evidence = [{'primitive': result['cipher_name'], 'severity': 'LOW'}]
+            evidence = [{'primitive': result.get('cipher_name', 'Unknown'), 'severity': 'LOW'}]
+        elif record['kind'] == 'pcap':
+            evidence = [{'primitive': s.get('selected_cipher') or s.get('cipher_suite', 'TLS Session'), 'severity': 'HIGH' if s.get('is_quantum_vulnerable') else 'LOW', 'file': f"{s.get('server_ip')}:{s.get('server_port', 443)}"} for s in result.get('sessions', [])]
+
         nodes.append({'id': record['id'], 'label': record['kind'] + ' ' + record['id'][:8], 'group': 'service', 'severity': 'low', 'blast_radius': []})
         for i, finding in enumerate(evidence):
             node_id = record['id'] + ':' + str(i)
@@ -1042,19 +1045,29 @@ def pcap_worker(payload):
 
 
 class PcapRequest(BaseModel):
-    raw_hex: str = Field(min_length=48, max_length=MAX_BYTES * 2)
+    raw_hex: Optional[str] = Field(default=None, max_length=MAX_BYTES * 2)
+    with_pqc_hybrid: bool = True
     file_name: str = Field(default='capture.pcap', max_length=300)
 
 
 @router.post('/scan/pcap', status_code=202)
 def scan_pcap(req: PcapRequest, request: Request, project: str = Project):
-    try:
-        raw = bytes.fromhex(req.raw_hex)
-        if not raw or len(raw) > MAX_BYTES:
-            raise ValueError()
-    except ValueError:
-        raise HTTPException(422, 'Supply valid hex representing a PCAP file up to 8 MiB')
+    if req.raw_hex:
+        try:
+            raw = bytes.fromhex(req.raw_hex)
+            if not raw or len(raw) > MAX_BYTES:
+                raise ValueError()
+        except ValueError:
+            raise HTTPException(422, 'Supply valid hex representing a PCAP file up to 8 MiB')
+    else:
+        raw = PcapEngine.generate_synthetic_pcap(with_pqc_hybrid=req.with_pqc_hybrid)
     return enqueue(request, project, 'pcap', {'bytes': base64.b64encode(raw).decode(), 'file_name': req.file_name}, pcap_worker)
+
+
+@router.post('/scan/pcap/synthetic', status_code=202)
+def scan_pcap_synthetic(request: Request, project: str = Project, with_pqc_hybrid: bool = True):
+    raw = PcapEngine.generate_synthetic_pcap(with_pqc_hybrid=with_pqc_hybrid)
+    return enqueue(request, project, 'pcap', {'bytes': base64.b64encode(raw).decode(), 'file_name': 'synthetic_capture.pcap'}, pcap_worker)
 
 
 @router.post('/scan/pcap/upload', status_code=202)
@@ -1064,6 +1077,26 @@ async def upload_pcap(request: Request, file: UploadFile = File(...), project: s
     if not raw or len(raw) > MAX_BYTES:
         raise HTTPException(413, 'Upload must contain 1 byte to 8 MiB')
     return enqueue(request, project, 'pcap', {'bytes': base64.b64encode(raw).decode(), 'file_name': (file.filename or 'capture.pcap')[:300]}, pcap_worker)
+
+
+class PcapAnalyzeRequest(BaseModel):
+    raw_hex: Optional[str] = None
+    with_pqc_hybrid: bool = True
+    file_name: str = "capture.pcap"
+
+
+@router.api_route('/experimental/pcap', methods=['GET', 'POST'])
+def analyze_pcap_direct(req: Optional[PcapAnalyzeRequest] = None):
+    if req and req.raw_hex:
+        try:
+            raw = bytes.fromhex(req.raw_hex)
+        except ValueError:
+            raise HTTPException(422, 'Invalid hex data for PCAP')
+    else:
+        with_pqc = req.with_pqc_hybrid if req else True
+        raw = PcapEngine.generate_synthetic_pcap(with_pqc_hybrid=with_pqc)
+    return PcapEngine.parse_pcap_bytes(raw).model_dump()
+
 
 
 class RuntimeTraceRequest(BaseModel):
@@ -1166,9 +1199,10 @@ def classify_binary_ml(req: BinaryMLRequest):
     return BinaryMLClassifier.classify_binary(raw, req.file_name).model_dump()
 
 
-@router.post('/demo/sih-flow')
+@router.api_route('/demo/sih-flow', methods=['GET', 'POST'])
 def run_sih_demo():
     return SihDemoRunner.run_full_flow().model_dump()
+
 
 
 app.include_router(router, prefix='/api')

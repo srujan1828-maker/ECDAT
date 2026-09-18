@@ -91,6 +91,16 @@ class CrossSurfaceCorrelator:
             elif kind == "network":
                 recs = normalize_network_scan(result, scan_id, input_hash=input_hash)
                 self.evidence.extend(recs)
+            elif kind == "pcap":
+                for rec_dict in result.get("evidence_records", []):
+                    if isinstance(rec_dict, dict):
+                        try:
+                            self.evidence.append(EvidenceRecord(**rec_dict))
+                        except Exception:
+                            pass
+                    elif isinstance(rec_dict, EvidenceRecord):
+                        self.evidence.append(rec_dict)
+
 
     def _add_node(self, node_id: str, label: str, node_type: str, severity: str = "low", surface: str = "unknown", qv: Optional[bool] = None, meta: Optional[Dict[str, Any]] = None):
         if node_id not in self.nodes:

@@ -64,11 +64,12 @@ class KnowledgeBaseVersion:
 
 
 def compute_file_sha256(path: Path) -> str:
-    """Computes standard SHA-256 hex digest of file contents."""
+    """Computes standard SHA-256 hex digest of file contents (LF normalized for cross-platform reproducibility)."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
-        while chunk := f.read(65536):
-            h.update(chunk)
+        data = f.read()
+    data = data.replace(b"\r\n", b"\n")
+    h.update(data)
     return h.hexdigest()
 
 
