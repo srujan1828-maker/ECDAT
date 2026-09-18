@@ -22,33 +22,57 @@ def run_bounded(argv, timeout=3.0, completed=None):
     output = bytearray()
     with subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, env=env) as proc:
-        with selectors.DefaultSelector() as selector:
-            selector.register(proc.stdout, selectors.EVENT_READ)
-            deadline = time.monotonic() + timeout
-            reason = None
-            try:
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        reason = 'timeout'
-                        break
-                    if not selector.select(remaining):
-                        reason = 'timeout'
-                        break
-                    chunk = os.read(proc.stdout.fileno(), min(4096, MAX_OUTPUT + 1 - len(output)))
+        deadline = time.monotonic() + timeout
+        reason = None
+        if os.name == 'nt':
+            import threading
+            done = threading.Event()
+            def reader():
+                while not done.is_set():
+                    chunk = proc.stdout.read(min(4096, MAX_OUTPUT + 1 - len(output)))
                     if not chunk:
                         break
                     output.extend(chunk)
-                    if len(output) > MAX_OUTPUT:
-                        reason = 'output_limit'
+                    if len(output) > MAX_OUTPUT or (completed and completed(output.decode('utf-8', 'replace'))):
                         break
-                    if completed and completed(output.decode('utf-8', 'replace')):
-                        break
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                proc.wait()
+            t = threading.Thread(target=reader, daemon=True)
+            t.start()
+            t.join(timeout=max(0.01, timeout))
+            if t.is_alive():
+                reason = 'timeout'
+                done.set()
+            elif len(output) > MAX_OUTPUT:
+                reason = 'output_limit'
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+        else:
+            with selectors.DefaultSelector() as selector:
+                selector.register(proc.stdout, selectors.EVENT_READ)
+                try:
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            reason = 'timeout'
+                            break
+                        if not selector.select(remaining):
+                            reason = 'timeout'
+                            break
+                        chunk = os.read(proc.stdout.fileno(), min(4096, MAX_OUTPUT + 1 - len(output)))
+                        if not chunk:
+                            break
+                        output.extend(chunk)
+                        if len(output) > MAX_OUTPUT:
+                            reason = 'output_limit'
+                            break
+                        if completed and completed(output.decode('utf-8', 'replace')):
+                            break
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                    proc.wait()
     return {'text': output[:MAX_OUTPUT].decode('utf-8', 'replace'), 'reason': reason}
+
 
 
 def handshake_evidence(text):

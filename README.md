@@ -50,6 +50,31 @@ For remote deployment, configure `BACKEND_API_URL` on the frontend service at ru
 
 `POST /api/export/cbom?project=...` accepts `{"scan_ids":["..."],"target_name":"..."}`. `/api/overview` summarizes persisted scans. `/api/health` is a lightweight health endpoint. Demo routes are removed. Root aliases remain for compatibility, but clients must adopt the asynchronous response contract.
 
+## ECDAT V4 Core Foundation Architecture
+
+ECDAT V4 introduces a research-grade, evidence-driven foundation separating raw observations from post-quantum risk, crypto-agility assessment, and blast radius calculation:
+
+- **Evidence Model ($E_0..E_5$)**: Strict separation of confidence score ($[0.0, 1.0]$) from epistemological evidence tier ($E_0$ Metadata $\to$ $E_1$ Heuristic $\to$ $E_2$ Syntactic AST $\to$ $E_3$ Dynamic Probe $\to$ $E_4$ Corroborated $\to$ $E_5$ Hardware Attested). See [`docs/EVIDENCE_MODEL.md`](docs/EVIDENCE_MODEL.md).
+- **ScanManifest & Reproducibility**: Bit-for-bit canonical JSON hashing, host environment capture (OS, kernel, Python, OpenSSL, CPU), and automated secret redaction. See [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).
+- **Relational Asset Graph & Blast Radius**: Relational SQLite schema (`crypto_assets`, `evidence`, `graph_edges`) with foreign-key integrity, WAL mode, and reverse-dependency BFS traversal to compute affected upstream services. See [`docs/ASSET_GRAPH.md`](docs/ASSET_GRAPH.md).
+- **Multi-Modal Evidence Fusion**: Reconciles findings across source code, binary disassemblies, and active TLS probes with probabilistic confidence fusion ($1 - \prod (1 - c_i)$), discrepancy tracking, and explainability. See [`docs/EVIDENCE_FUSION.md`](docs/EVIDENCE_FUSION.md).
+- **Execution Sandbox**: Bounded execution isolation (`run_isolated`), timeout enforcement, memory bounds, and stdout/stderr volume limits. See [`docs/SANDBOX.md`](docs/SANDBOX.md).
+
+### New V4 REST Endpoints
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/scans/{id}/manifest` | `GET` | Retrieve the cryptographic reproducibility manifest and canonical hash. |
+| `/api/scans/{id}/evidence` | `GET` | Retrieve raw and normalized evidence items associated with a scan. |
+| `/api/scans/{id}/graph` | `GET` | Retrieve the cryptographic asset graph for a specific scan. |
+| `/api/assets` | `GET` | Query discovered cryptographic assets partitioned by project. |
+| `/api/assets/{id}` | `GET` | Retrieve single asset details, parameters, and PQC vulnerability status. |
+| `/api/assets/{id}/evidence` | `GET` | Fetch all linked evidence items supporting the discovery of this asset. |
+| `/api/assets/{id}/relationships` | `GET` | Retrieve incoming and outgoing relational edges for an asset. |
+| `/api/assets/{id}/blast-radius` | `GET` | Calculate reverse blast radius, upstream caller dependencies, and risk amplification. |
+| `/api/graph` | `GET` | Global relational asset graph with node/edge traversal for visualization. |
+
+
 ## Verification
 
 ```sh

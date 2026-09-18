@@ -5,7 +5,7 @@ import base64
 import os
 import re
 import secrets
-from typing import Literal
+from typing import Literal, Optional
 from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
@@ -169,6 +169,371 @@ def cancel(scan_id: str, request: Request, project: str = Project):
     return result
 
 
+@router.get('/scans/{scan_id}/evidence')
+def scan_evidence(scan_id: str, request: Request, project: str = Project):
+    record = request.app.state.store.get(scan_id, project)
+    if record is None:
+        raise HTTPException(404, 'Scan not found')
+    return request.app.state.store.get_scan_evidence(scan_id, project)
+
+
+@router.get('/scans/{scan_id}/manifest')
+def scan_manifest(scan_id: str, request: Request, project: str = Project):
+    record = request.app.state.store.get(scan_id, project)
+    if record is None:
+        raise HTTPException(404, 'Scan not found')
+    manifest = request.app.state.store.get_manifest(scan_id)
+    if manifest is None:
+        raise HTTPException(404, 'Manifest not found')
+    return manifest
+
+
+@router.get('/scans/{scan_id}/graph')
+def scan_graph(scan_id: str, request: Request, project: str = Project):
+    record = request.app.state.store.get(scan_id, project)
+    if record is None:
+        raise HTTPException(404, 'Scan not found')
+    return request.app.state.store.get_graph(project, scan_id)
+
+
+@router.get('/assets')
+def list_assets(request: Request, project: str = Project, scan_id: Optional[str] = None):
+    return request.app.state.store.get_assets(project, scan_id)
+
+
+@router.get('/assets/{asset_id}')
+def asset_detail(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    return asset
+
+
+@router.get('/assets/{asset_id}/evidence')
+def asset_evidence(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    return request.app.state.store.get_asset_evidence(asset_id)
+
+
+@router.get('/assets/{asset_id}/relationships')
+def asset_relationships(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    return request.app.state.store.get_asset_relationships(asset_id, project)
+
+
+@router.get('/assets/{asset_id}/blast-radius')
+def asset_blast_radius(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    assessment = request.app.state.store.get_blast_radius_assessment(asset_id)
+    if assessment is None:
+        from engine.blast_radius.blast_radius_pipeline import evaluate_blast_radius
+        evidence = request.app.state.store.get_asset_evidence(asset_id)
+        eval_res = evaluate_blast_radius(asset, graph_service=request.app.state.store, evidence_items=evidence)
+        request.app.state.store.save_blast_radius_assessment(eval_res)
+        assessment = eval_res.to_dict()
+    # Ensure 100% backward compatibility with P0 contract (target_node_id, total_impacted_count, impacted_assets)
+    if "target_node_id" not in assessment:
+        assessment["target_node_id"] = asset_id
+    if "impacted_assets" not in assessment:
+        assessment["impacted_assets"] = assessment.get("affected_assets", [])
+    if "total_impacted_count" not in assessment:
+        assessment["total_impacted_count"] = len(assessment.get("impacted_assets", []))
+    return assessment
+
+
+@router.get('/assets/{asset_id}/blast-radius/why')
+def asset_blast_radius_why(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    why = request.app.state.store.get_why_blast_radius(asset_id, project)
+    if why is None:
+        raise HTTPException(404, 'Blast radius explainability report not found')
+    return why
+
+
+@router.get('/assets/{asset_id}/blast-radius/paths')
+def asset_blast_radius_paths(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    assessment = request.app.state.store.get_blast_radius_assessment(asset_id)
+    if assessment is None:
+        from engine.blast_radius.blast_radius_pipeline import evaluate_blast_radius
+        evidence = request.app.state.store.get_asset_evidence(asset_id)
+        eval_res = evaluate_blast_radius(asset, graph_service=request.app.state.store, evidence_items=evidence)
+        request.app.state.store.save_blast_radius_assessment(eval_res)
+        assessment = eval_res.to_dict()
+    return {
+        "asset_id": asset_id,
+        "direct_dependents": assessment.get("direct_dependents", []),
+        "transitive_dependents": assessment.get("transitive_dependents", []),
+        "paths": assessment.get("dependency_paths", []),
+        "total_paths": len(assessment.get("dependency_paths", [])),
+    }
+
+
+@router.get('/assets/{asset_id}/blast-radius/criticality')
+def asset_blast_radius_criticality(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    assessment = request.app.state.store.get_blast_radius_assessment(asset_id)
+    if assessment is None:
+        from engine.blast_radius.blast_radius_pipeline import evaluate_blast_radius
+        evidence = request.app.state.store.get_asset_evidence(asset_id)
+        eval_res = evaluate_blast_radius(asset, graph_service=request.app.state.store, evidence_items=evidence)
+        request.app.state.store.save_blast_radius_assessment(eval_res)
+        assessment = eval_res.to_dict()
+    return {
+        "asset_id": asset_id,
+        "criticality": assessment.get("criticality", "UNKNOWN"),
+        "reasons": [r for r in assessment.get("reason_chain", []) if r.get("step") == "ARCHITECTURAL_CRITICALITY_EVALUATION"],
+    }
+
+
+@router.get('/assets/{asset_id}/migration')
+def asset_migration(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    plan = request.app.state.store.get_pqc_migration_plan(asset_id)
+    if plan is None:
+        from engine.migration.migration_pipeline import generate_migration_plan
+        risk = request.app.state.store.get_risk_assessment(asset_id)
+        agility = request.app.state.store.get_agility_assessment(asset_id)
+        pqc = request.app.state.store.get_pqc_readiness(asset_id)
+        blast = request.app.state.store.get_blast_radius_assessment(asset_id)
+        evidence = request.app.state.store.get_asset_evidence(asset_id)
+        plan_res = generate_migration_plan(
+            asset=asset,
+            risk_assessment=risk,
+            agility_assessment=agility,
+            pqc_readiness=pqc,
+            blast_radius=blast,
+            evidence_items=evidence,
+        )
+        request.app.state.store.save_pqc_migration_plan(plan_res)
+        plan = plan_res.to_dict()
+    return plan
+
+
+@router.get('/assets/{asset_id}/migration/why')
+def asset_migration_why(asset_id: str, request: Request, project: str = Project):
+    why = request.app.state.store.get_why_migration(asset_id, project)
+    if why is None:
+        raise HTTPException(404, 'Asset or migration plan not found')
+    return why
+
+
+@router.get('/assets/{asset_id}/migration/verification')
+def asset_migration_verification(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    ver = request.app.state.store.get_migration_verification(asset_id)
+    if ver is None:
+        raise HTTPException(404, 'Migration verification not found')
+    return ver
+
+
+@router.get('/assets/{asset_id}/risk')
+def asset_risk(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    risk = request.app.state.store.get_risk_assessment(asset_id)
+    if risk is None:
+        intel = request.app.state.store.get_asset_intelligence(asset_id, project)
+        risk = intel.get('risk') if intel else None
+    if risk is None:
+        raise HTTPException(404, 'Risk assessment not found')
+    return risk
+
+
+@router.get('/assets/{asset_id}/pqc-readiness')
+def asset_pqc_readiness(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    pqc = request.app.state.store.get_pqc_readiness(asset_id)
+    if pqc is None:
+        intel = request.app.state.store.get_asset_intelligence(asset_id, project)
+        pqc = intel.get('pqc_readiness') if intel else None
+    if pqc is None:
+        raise HTTPException(404, 'PQC readiness assessment not found')
+    return pqc
+
+
+@router.get('/assets/{asset_id}/intelligence')
+def asset_intelligence(asset_id: str, request: Request, project: str = Project):
+    intel = request.app.state.store.get_asset_intelligence(asset_id, project)
+    if intel is None:
+        raise HTTPException(404, 'Asset or intelligence not found')
+    return intel
+
+
+@router.get('/assets/{asset_id}/why-risk')
+def asset_why_risk(asset_id: str, request: Request, project: str = Project):
+    why = request.app.state.store.get_why_risk(asset_id, project)
+    if why is None:
+        raise HTTPException(404, 'Asset or explainability report not found')
+    return why
+
+
+@router.get('/assets/{asset_id}/agility')
+def asset_agility(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    agility = request.app.state.store.get_agility_assessment(asset_id)
+    if agility is None:
+        from engine.agility.agility_pipeline import evaluate_agility
+        evidence = request.app.state.store.get_asset_evidence(asset_id)
+        blast = request.app.state.store.get_blast_radius(asset_id)
+        eval_res = evaluate_agility(asset, evidence, graph_service=request.app.state.store, blast_radius=blast)
+        request.app.state.store.save_agility_assessment(eval_res)
+        agility = eval_res.to_dict()
+    return agility
+
+
+@router.get('/assets/{asset_id}/agility/why')
+def asset_agility_why(asset_id: str, request: Request, project: str = Project):
+    why = request.app.state.store.get_why_agility(asset_id, project)
+    if why is None:
+        raise HTTPException(404, 'Asset or agility explainability report not found')
+    return why
+
+
+@router.get('/assets/{asset_id}/change-surface')
+def asset_change_surface(asset_id: str, request: Request, project: str = Project):
+    asset = request.app.state.store.get_asset(asset_id, project)
+    if asset is None:
+        raise HTTPException(404, 'Asset not found')
+    surface = request.app.state.store.get_change_surface(asset_id)
+    if surface is None:
+        from engine.agility.agility_pipeline import evaluate_agility
+        evidence = request.app.state.store.get_asset_evidence(asset_id)
+        blast = request.app.state.store.get_blast_radius(asset_id)
+        eval_res = evaluate_agility(asset, evidence, graph_service=request.app.state.store, blast_radius=blast)
+        request.app.state.store.save_agility_assessment(eval_res)
+        surface = eval_res.change_surface.to_dict() if eval_res.change_surface else None
+    if surface is None:
+        raise HTTPException(404, 'Change surface not found')
+    return surface
+
+
+
+class EvaluateIntelligenceRequest(BaseModel):
+    asset: dict = Field(..., description="Asset dictionary with algorithm/name and optional parameters")
+    evidence: list[dict] = Field(default_factory=list, description="P0 evidence records supporting asset")
+    context: dict = Field(default_factory=dict, description="Environmental or architectural context")
+
+
+@router.post('/intelligence/evaluate')
+def evaluate_intelligence_endpoint(req: EvaluateIntelligenceRequest):
+    from engine.intelligence.intelligence_pipeline import evaluate_asset
+    assessment = evaluate_asset(req.asset, req.evidence, req.context)
+    return assessment.to_dict()
+
+
+class EvaluateBlastRadiusRequest(BaseModel):
+    asset: dict = Field(..., description="Target asset dictionary with id/name/algorithm")
+    evidence: list[dict] = Field(default_factory=list, description="Associated evidence items")
+    context: dict = Field(default_factory=dict, description="Execution environment or architectural context")
+    edges: list[dict] = Field(default_factory=list, description="Optional raw graph edges for in-memory traversal")
+    nodes: list[dict] = Field(default_factory=list, description="Optional raw graph nodes for in-memory traversal")
+    max_depth: int = Field(default=10, ge=1, le=50)
+    max_paths: int = Field(default=100, ge=1, le=500)
+    max_nodes: int = Field(default=500, ge=1, le=2000)
+    max_edges: int = Field(default=1000, ge=1, le=5000)
+
+
+@router.post('/blast-radius/evaluate')
+def evaluate_blast_radius_endpoint(req: EvaluateBlastRadiusRequest, request: Request):
+    from engine.blast_radius.blast_radius_pipeline import evaluate_blast_radius
+    store = getattr(request.app.state, "store", None)
+    assessment = evaluate_blast_radius(
+        target_asset=req.asset,
+        graph_service=store,
+        evidence_items=req.evidence,
+        context=req.context,
+        raw_edges=req.edges,
+        raw_nodes=req.nodes,
+        max_depth=req.max_depth,
+        max_paths=req.max_paths,
+        max_nodes=req.max_nodes,
+        max_edges=req.max_edges,
+    )
+    return assessment.to_dict()
+
+
+class GenerateMigrationPlanRequest(BaseModel):
+    asset: dict = Field(..., description="Target asset dictionary with id/name/algorithm")
+    risk_assessment: Optional[dict] = Field(default=None, description="P2.1 Risk assessment")
+    agility_assessment: Optional[dict] = Field(default=None, description="P2.2 Agility assessment")
+    pqc_readiness: Optional[dict] = Field(default=None, description="P2.1 PQC readiness assessment")
+    blast_radius: Optional[dict] = Field(default=None, description="P2.3 Blast radius assessment")
+    evidence: list[dict] = Field(default_factory=list, description="Associated evidence records")
+    overrides: Optional[dict] = Field(default=None, description="Optional target or priority overrides")
+
+
+@router.post('/migration/plan')
+def create_pqc_migration_plan(req: GenerateMigrationPlanRequest, request: Request):
+    from engine.migration.migration_pipeline import generate_migration_plan
+    store = getattr(request.app.state, "store", None)
+    plan = generate_migration_plan(
+        asset=req.asset,
+        risk_assessment=req.risk_assessment,
+        agility_assessment=req.agility_assessment,
+        pqc_readiness=req.pqc_readiness,
+        blast_radius=req.blast_radius,
+        evidence_items=req.evidence,
+        overrides=req.overrides,
+    )
+    if store and hasattr(store, "save_pqc_migration_plan"):
+        store.save_pqc_migration_plan(plan)
+    return plan.to_dict()
+
+
+class VerifyMigrationRequest(BaseModel):
+    plan: Optional[dict] = Field(default=None, description="Migration plan to verify")
+    before_scan: Optional[dict] = Field(default=None, description="Pre-migration scan results and observations")
+    after_scan: Optional[dict] = Field(default=None, description="Post-migration scan results and observations")
+    asset_id: Optional[str] = Field(default=None, description="Target asset ID")
+    evidence: list[dict] = Field(default_factory=list, description="Associated evidence records")
+
+
+@router.post('/migration/verify')
+def verify_migration_endpoint(req: VerifyMigrationRequest, request: Request):
+    from engine.migration.migration_pipeline import execute_migration_verification
+    from engine.migration.models import MigrationPlan
+    store = getattr(request.app.state, "store", None)
+    plan_obj = MigrationPlan.from_dict(req.plan) if req.plan else None
+    ver = execute_migration_verification(
+        plan=plan_obj,
+        before_scan=req.before_scan,
+        after_scan=req.after_scan,
+        asset_id=req.asset_id,
+        evidence_items=req.evidence,
+    )
+    if store and hasattr(store, "save_migration_verification"):
+        store.save_migration_verification(ver)
+    return ver.to_dict()
+
+
+
+@router.get('/graph')
+def project_graph(request: Request, project: str = Project):
+    return request.app.state.store.get_graph(project)
+
+
 @router.get('/overview')
 def overview(request: Request, project: str = Project):
     records = [r for r in request.app.state.store.list(project) if r['status'] == 'completed']
@@ -218,6 +583,21 @@ class AgilityRequest(BaseModel):
 @router.post('/agility/evaluate')
 def agility(req: AgilityRequest):
     return calculate_crypto_agility(**req.model_dump())
+
+
+class EvaluateAgilityV2Request(BaseModel):
+    asset: dict = Field(..., description="Asset dictionary with algorithm/name and optional parameters")
+    evidence: list[dict] = Field(default_factory=list, description="P0/P1 evidence records supporting asset")
+    context: dict = Field(default_factory=dict, description="Environmental or architectural context")
+
+
+@router.post('/agility/evaluate-v2')
+def evaluate_agility_v2_endpoint(req: EvaluateAgilityV2Request, request: Request):
+    from engine.agility.agility_pipeline import evaluate_agility
+    store = getattr(request.app.state, "store", None)
+    assessment = evaluate_agility(req.asset, req.evidence, req.context, graph_service=store)
+    return assessment.to_dict()
+
 
 
 class MigrationRequest(BaseModel):
@@ -299,6 +679,96 @@ class MoscaRequest(BaseModel):
 @router.post('/risk/mosca')
 def mosca(req: MoscaRequest):
     return calculate_mosca_risk(req.x, req.y, req.z)
+
+
+# =========================================================================
+# P4.1 Knowledge & P4.2 Research Evaluation Endpoints
+# =========================================================================
+
+@router.get('/knowledge/version')
+def get_knowledge_version():
+    from engine.knowledge_version import load_knowledge_version
+    kb = load_knowledge_version()
+    return {
+        "knowledge_base_id": kb.knowledge_base_id,
+        "knowledge_base_version": kb.version,
+        "schema_version": kb.schema_version,
+        "engine_version": kb.engine_version,
+        "knowledge_hash": kb.knowledge_hash,
+        "provenance": kb.provenance,
+        "compatibility_notes": kb.compatibility_notes,
+    }
+
+
+@router.get('/knowledge/summary')
+def get_knowledge_summary():
+    from engine.knowledge_version import load_knowledge_version
+    kb = load_knowledge_version()
+    return {
+        "knowledge_base_version": kb.version,
+        "knowledge_hash": kb.knowledge_hash,
+        "rule_count": kb.rule_count,
+        "algorithm_count": kb.algorithm_count,
+        "migration_mapping_count": kb.migration_mapping_count,
+        "sources": kb.sources,
+    }
+
+
+@router.get('/evaluation/latest')
+def get_evaluation_latest():
+    from pathlib import Path
+    import json
+    res_path = Path(__file__).resolve().parent / "evaluation" / "results" / "evaluation_result.json"
+    if not res_path.exists():
+        from evaluation import run_benchmark
+        result = run_benchmark()
+        return result.to_dict()
+    with open(res_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@router.get('/evaluation/summary')
+def get_evaluation_summary():
+    from pathlib import Path
+    import json
+    res_path = Path(__file__).resolve().parent / "evaluation" / "results" / "evaluation_result.json"
+    if not res_path.exists():
+        from evaluation import run_benchmark
+        result = run_benchmark()
+        return {
+            "overall_metrics": result.overall_metrics,
+            "dataset_version": result.dataset_version,
+            "dataset_hash": result.dataset_hash,
+            "result_hash": result.result_hash,
+        }
+    with open(res_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return {
+        "overall_metrics": data.get("overall_metrics", {}),
+        "dataset_version": data.get("dataset_version", ""),
+        "dataset_hash": data.get("dataset_hash", ""),
+        "result_hash": data.get("result_hash", ""),
+    }
+
+
+@router.get('/evaluation/modalities')
+def get_evaluation_modalities():
+    from pathlib import Path
+    import json
+    res_path = Path(__file__).resolve().parent / "evaluation" / "results" / "evaluation_result.json"
+    if not res_path.exists():
+        from evaluation import run_benchmark
+        result = run_benchmark()
+        return {
+            "modality_metrics": result.modality_metrics,
+            "result_hash": result.result_hash,
+        }
+    with open(res_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return {
+        "modality_metrics": data.get("modality_metrics", {}),
+        "result_hash": data.get("result_hash", ""),
+    }
 
 
 app.include_router(router, prefix='/api')
