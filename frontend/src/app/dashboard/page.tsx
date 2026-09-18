@@ -33,6 +33,7 @@ import { VerificationPanel } from "@/components/ecdat/verification-panel";
 import { StandardsPanel } from "@/components/ecdat/standards-panel";
 import { ExperimentalHub } from "@/components/ecdat/experimental-hub";
 import { SihDemoPanel } from "@/components/ecdat/sih-demo-panel";
+import { FeatureScanHistory } from "@/components/ecdat/feature-scan-history";
 
 const inputClass =
   "w-full min-w-0 rounded-md border border-subtle bg-canvas px-3 py-2.5 text-sm text-foreground placeholder:text-quiet outline-none transition-colors focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15";
@@ -283,6 +284,27 @@ export default function Dashboard() {
       const link = document.createElement("a");
       link.href = url;
       link.download = `${project}-cbom.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function downloadSingle(scan: Scan) {
+    setError("");
+    try {
+      const label = scanLabel(scan).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const data = await requestApi("/export/cbom", project, token, {
+        scan_ids: [scan.id],
+        target_name: `${project}-${label}`,
+      });
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${project}-${label}-cbom.json`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -541,10 +563,24 @@ export default function Dashboard() {
                 setView("scans");
               }}
               onInspect={(id) => {
+                const targetScan = scans.find((s) => s.id === id);
+                if (targetScan) {
+                  if (
+                    targetScan.kind === "network" ||
+                    targetScan.kind === "code" ||
+                    targetScan.kind === "binary"
+                  ) {
+                    setMode(targetScan.kind);
+                  }
+                }
                 setSelected(id);
                 setView("scans");
               }}
               onMigration={() => setView("migration")}
+              onVerification={() => setView("verification")}
+              onStandards={() => setView("standards")}
+              onExperimental={() => setView("experimental")}
+              onSihDemo={() => setView("sih_demo")}
             />
           )}
           {view === "migration" && (
@@ -862,6 +898,30 @@ export default function Dashboard() {
                   </div>
                 </aside>
               </div>
+
+              {/* Feature-Specific Scan History: Shows ONLY this feature's scans and findings */}
+              <FeatureScanHistory
+                mode={mode}
+                scans={scans}
+                selectedId={selected}
+                onSelectScan={(id) => setSelected(id)}
+                exportIds={exportIds}
+                onToggleExport={(id) => {
+                  setExportIds((ids) =>
+                    ids.includes(id)
+                      ? ids.filter((x) => x !== id)
+                      : [...ids, id],
+                  );
+                }}
+                onRescanTarget={(newTarget) => {
+                  if (mode === "network") {
+                    setTarget(newTarget);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }
+                }}
+                onDownloadSingleCbom={(scan) => void downloadSingle(scan)}
+                onRefresh={() => void refresh()}
+              />
             </>
           )}
           {view === "history" && (

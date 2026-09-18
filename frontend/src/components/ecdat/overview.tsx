@@ -21,6 +21,10 @@ import {
   ShieldAlert,
   Gauge,
   Radar,
+  FileCheck2,
+  Scale,
+  FlaskConical,
+  PlayCircle,
 } from "lucide-react";
 import { Scan } from "@/lib/api";
 export function Overview({
@@ -29,12 +33,20 @@ export function Overview({
   onStart,
   onInspect,
   onMigration,
+  onVerification,
+  onStandards,
+  onExperimental,
+  onSihDemo,
 }: {
   scans: Scan[];
   connected: boolean;
   onStart: (kind: "network" | "code" | "binary") => void;
   onInspect: (id: string) => void;
   onMigration: () => void;
+  onVerification?: () => void;
+  onStandards?: () => void;
+  onExperimental?: () => void;
+  onSihDemo?: () => void;
 }) {
   const [tipsDismissed, setTipsDismissed] = useState(false);
   const tipsSeen = useSyncExternalStore(
@@ -526,6 +538,42 @@ export function Overview({
           </span>
           <ArrowRight size={16} />
         </button>
+        {onVerification && (
+          <button className="quick-action" onClick={onVerification}>
+            <FileCheck2 size={20} />
+            <span>
+              Verification engine<small>Closed-loop audit</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+        )}
+        {onStandards && (
+          <button className="quick-action" onClick={onStandards}>
+            <Scale size={20} />
+            <span>
+              Standards matrix<small>FIPS 203 / CNSA 2.0</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+        )}
+        {onExperimental && (
+          <button className="quick-action" onClick={onExperimental}>
+            <FlaskConical size={20} />
+            <span>
+              Experimental hub<small>7 Next-gen tools</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+        )}
+        {onSihDemo && (
+          <button className="quick-action" onClick={onSihDemo}>
+            <PlayCircle size={20} />
+            <span>
+              SIH 10-step demo<small>Judge walkthrough</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+        )}
       </div>
     </div>
   );
