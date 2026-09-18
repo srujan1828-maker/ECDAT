@@ -28,7 +28,11 @@ import Link from "next/link";
 import { ThemeToggle } from "@/components/ecdat/theme-toggle";
 import { Overview } from "@/components/ecdat/overview";
 import { MigrationPlanner } from "@/components/ecdat/migration-planner";
-import { LayoutDashboard, Route } from "lucide-react";
+import { LayoutDashboard, Route, FlaskConical, Scale, FileCheck2, PlayCircle } from "lucide-react";
+import { VerificationPanel } from "@/components/ecdat/verification-panel";
+import { StandardsPanel } from "@/components/ecdat/standards-panel";
+import { ExperimentalHub } from "@/components/ecdat/experimental-hub";
+import { SihDemoPanel } from "@/components/ecdat/sih-demo-panel";
 
 const inputClass =
   "w-full min-w-0 rounded-md border border-subtle bg-canvas px-3 py-2.5 text-sm text-foreground placeholder:text-quiet outline-none transition-colors focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15";
@@ -75,7 +79,12 @@ const scanTypes = [
     ],
   },
 ] as const;
-const kindLabels = { network: "Network", code: "Code", binary: "Binary" };
+const kindLabels: Record<string, string> = {
+  network: "Network",
+  code: "Code",
+  binary: "Binary",
+  pcap: "Passive PCAP",
+};
 const languageLabels: Record<string, string> = {
   python: "Python",
   java: "Java",
@@ -131,7 +140,7 @@ const languageExtensions: Record<string, string> = {
 
 export default function Dashboard() {
   const [view, setView] = useState<
-    "overview" | "scans" | "history" | "migration"
+    "overview" | "scans" | "history" | "migration" | "verification" | "standards" | "experimental" | "sih_demo"
   >("overview");
   const [projectInput, setProjectInput] = useState("default");
   const [project, setProject] = useState("default");
@@ -156,6 +165,11 @@ export default function Dashboard() {
     function readHash() {
       const hash = window.location.hash.slice(1);
       if (hash === "migration") setView("migration");
+      else if (hash === "verify" || hash === "verification") setView("verification");
+      else if (hash === "standards") setView("standards");
+      else if (hash === "experimental") setView("experimental");
+      else if (hash === "sih_demo" || hash === "sih-demo") setView("sih_demo");
+      else if (hash === "history") setView("history");
       else if (["network", "code", "binary"].includes(hash)) {
         setMode(hash as "network" | "code" | "binary");
         setView("scans");
@@ -309,7 +323,7 @@ export default function Dashboard() {
             v3
           </span>
         </div>
-        <nav aria-label="Workspace navigation" className="p-3 lg:flex-1">
+        <nav aria-label="Workspace navigation" className="overflow-y-auto p-3 lg:flex-1">
           <p className="nav-group-label">Overview</p>
           <div className="mb-4 grid grid-cols-2 gap-1 lg:grid-cols-1">
             <button
@@ -351,20 +365,54 @@ export default function Dashboard() {
               </button>
             ))}
           </div>
-          <p className="nav-group-label nav-group-action">Action</p>
+          <p className="nav-group-label nav-group-action">Action & Verification</p>
           <button
             onClick={() => setView("migration")}
             aria-current={view === "migration" ? "page" : undefined}
-            className={`flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left text-xs font-semibold ${view === "migration" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "migration" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
           >
             <Route size={16} />
             Migration planner
+          </button>
+          <button
+            onClick={() => setView("verification")}
+            aria-current={view === "verification" ? "page" : undefined}
+            className={`mt-1.5 flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "verification" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+          >
+            <FileCheck2 size={16} />
+            Verification engine
+          </button>
+          <p className="nav-group-label nav-group-action">Compliance</p>
+          <button
+            onClick={() => setView("standards")}
+            aria-current={view === "standards" ? "page" : undefined}
+            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "standards" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+          >
+            <Scale size={16} />
+            Standards & mandates
+          </button>
+          <p className="nav-group-label nav-group-action">Innovations</p>
+          <button
+            onClick={() => setView("experimental")}
+            aria-current={view === "experimental" ? "page" : undefined}
+            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "experimental" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+          >
+            <FlaskConical size={16} />
+            Experimental hub
+          </button>
+          <button
+            onClick={() => setView("sih_demo")}
+            aria-current={view === "sih_demo" ? "page" : undefined}
+            className={`mt-1.5 flex w-full items-center gap-3 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2.5 text-left text-xs font-semibold text-teal hover:bg-cyan-500/20`}
+          >
+            <PlayCircle size={16} className="text-teal" />
+            SIH 10-step demo
           </button>
           <p className="nav-group-label nav-group-action">Reports</p>
           <button
             onClick={() => setView("history")}
             aria-current={view === "history" ? "page" : undefined}
-            className={`mt-3 hidden w-full items-center gap-3 rounded-md px-3 py-3 text-left text-xs font-medium lg:flex ${view === "history" ? "bg-cyan-500/10 text-teal" : "text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+            className={`mt-1.5 hidden w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs font-medium lg:flex ${view === "history" ? "bg-cyan-500/10 text-teal" : "text-quiet hover:bg-surface-raised hover:text-foreground"}`}
           >
             <History size={16} />
             History & reports
@@ -454,7 +502,17 @@ export default function Dashboard() {
                 ? "Command center"
                 : view === "migration"
                   ? "Migration planner"
-                  : activeType.label}
+                  : view === "verification"
+                    ? "Closed-loop verification"
+                    : view === "standards"
+                      ? "Standards & regulatory mapping"
+                      : view === "experimental"
+                        ? "Experimental extensions (A–G)"
+                        : view === "sih_demo"
+                          ? "SIH 10-step interactive demo"
+                          : view === "history"
+                            ? "History & reports"
+                            : activeType.label}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -500,6 +558,18 @@ export default function Dashboard() {
                 setView("scans");
               }}
             />
+          )}
+          {view === "verification" && (
+            <VerificationPanel project={project} token={token} />
+          )}
+          {view === "standards" && (
+            <StandardsPanel project={project} token={token} />
+          )}
+          {view === "experimental" && (
+            <ExperimentalHub project={project} token={token} />
+          )}
+          {view === "sih_demo" && (
+            <SihDemoPanel project={project} token={token} />
           )}
           {view !== "scans" && error && (
             <div role="alert" className="ec-alert">
@@ -830,7 +900,7 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {(["network", "code", "binary"] as Scan["kind"][]).map(
+                {(["network", "code", "binary"] as const).map(
                   (kind) => {
                     const Icon = scanTypes.find(
                       (type) => type.id === kind,

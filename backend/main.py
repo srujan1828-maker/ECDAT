@@ -5,6 +5,8 @@ import base64
 import os
 import re
 import secrets
+import sys
+import tempfile
 from typing import Literal
 from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +20,24 @@ from engine.cbom_generator import generate_cyclonedx_cbom
 from engine.agility_engine import calculate_crypto_agility
 from engine.migration_simulator import simulate_pqc_migration_roadmap
 from engine.quantum_risk import calculate_mosca_risk
+from engine.evidence_model import (
+    EvidenceRecord,
+    normalize_source_finding,
+    normalize_binary_detection,
+    normalize_network_scan
+)
+from engine.correlator import CrossSurfaceCorrelator
+from engine.verifier import ClosedLoopVerifier
+from engine.knowledge_graph import CryptoKnowledgeGraph
+from engine.standards_mapping import get_all_standards
+from engine.pcap_engine import PcapEngine
+from engine.runtime_tracer import RuntimeTracer
+from engine.ebpf_tracer import EbpfTracer
+from engine.custom_crypto_detector import CustomCryptoDetector
+from engine.patch_engine import AutoPatchEngine
+from engine.quantum_estimator import QuantumResourceEstimator
+from engine.binary_classifier import BinaryMLClassifier
+from engine.demo_flow import SihDemoRunner
 
 
 @asynccontextmanager
@@ -299,6 +319,200 @@ class MoscaRequest(BaseModel):
 @router.post('/risk/mosca')
 def mosca(req: MoscaRequest):
     return calculate_mosca_risk(req.x, req.y, req.z)
+
+
+@router.get('/evidence/records')
+def get_evidence_records(request: Request, project: str = Project):
+    records = [r for r in request.app.state.store.list(project) if r['status'] == 'completed']
+    correlator = CrossSurfaceCorrelator()
+    correlator.ingest_scan_results(records)
+    return [e.model_dump() for e in correlator.evidence]
+
+
+@router.get('/correlate')
+def get_correlated_topology(request: Request, project: str = Project):
+    records = [r for r in request.app.state.store.list(project) if r['status'] == 'completed']
+    correlator = CrossSurfaceCorrelator()
+    correlator.ingest_scan_results(records)
+    return correlator.correlate(default_app_name=project).model_dump()
+
+
+@router.get('/graph')
+def get_crypto_graph(request: Request, project: str = Project):
+    records = [r for r in request.app.state.store.list(project) if r['status'] == 'completed']
+    if not records:
+        return CryptoKnowledgeGraph().export_for_ui()
+    kg = CryptoKnowledgeGraph.from_scans(records, app_name=project)
+    return kg.export_for_ui()
+
+
+class VerifyRequest(BaseModel):
+    baseline_scan_ids: list[str] = Field(min_length=1)
+    post_migration_scan_ids: list[str] = Field(min_length=1)
+    target_weaknesses: list[str] | None = None
+
+
+@router.post('/verify')
+def verify_migration(req: VerifyRequest, request: Request, project: str = Project):
+    b_records = [request.app.state.store.get(sid, project) for sid in dict.fromkeys(req.baseline_scan_ids)]
+    p_records = [request.app.state.store.get(sid, project) for sid in dict.fromkeys(req.post_migration_scan_ids)]
+    if any(r is None or r['status'] != 'completed' for r in b_records + p_records):
+        raise HTTPException(422, 'Verification requires valid completed scans from this project')
+
+    c_base = CrossSurfaceCorrelator()
+    c_base.ingest_scan_results(b_records)
+    c_post = CrossSurfaceCorrelator()
+    c_post.ingest_scan_results(p_records)
+
+    report = ClosedLoopVerifier.verify(
+        baseline_records=c_base.evidence,
+        post_migration_records=c_post.evidence,
+        baseline_scan_ids=req.baseline_scan_ids,
+        post_migration_scan_ids=req.post_migration_scan_ids,
+        target_weakness_filter=req.target_weaknesses
+    )
+    return report.model_dump()
+
+
+@router.get('/standards/mapping')
+def standards_mapping():
+    return get_all_standards()
+
+
+def pcap_worker(payload):
+    raw = base64.b64decode(payload['bytes'])
+    res = PcapEngine.parse_pcap_bytes(raw)
+    return res.model_dump()
+
+
+class PcapRequest(BaseModel):
+    raw_hex: str = Field(min_length=48, max_length=MAX_BYTES * 2)
+    file_name: str = Field(default='capture.pcap', max_length=300)
+
+
+@router.post('/scan/pcap', status_code=202)
+def scan_pcap(req: PcapRequest, request: Request, project: str = Project):
+    try:
+        raw = bytes.fromhex(req.raw_hex)
+        if not raw or len(raw) > MAX_BYTES:
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(422, 'Supply valid hex representing a PCAP file up to 8 MiB')
+    return enqueue(request, project, 'pcap', {'bytes': base64.b64encode(raw).decode(), 'file_name': req.file_name}, pcap_worker)
+
+
+@router.post('/scan/pcap/upload', status_code=202)
+async def upload_pcap(request: Request, file: UploadFile = File(...), project: str = Project):
+    raw = await file.read(MAX_BYTES + 1)
+    await file.close()
+    if not raw or len(raw) > MAX_BYTES:
+        raise HTTPException(413, 'Upload must contain 1 byte to 8 MiB')
+    return enqueue(request, project, 'pcap', {'bytes': base64.b64encode(raw).decode(), 'file_name': (file.filename or 'capture.pcap')[:300]}, pcap_worker)
+
+
+class RuntimeTraceRequest(BaseModel):
+    target_command: list[str] | None = None
+    target_code: str | None = None
+
+
+@router.post('/experimental/runtime-trace')
+def run_runtime_trace(req: RuntimeTraceRequest):
+    if req.target_code:
+        with tempfile.NamedTemporaryFile(suffix='.py', delete=False, mode='w') as tf:
+            tf.write(req.target_code)
+            tmp_path = tf.name
+        try:
+            return RuntimeTracer.execute_instrumented_run([sys.executable, tmp_path]).model_dump()
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+    cmd = req.target_command or [sys.executable, '-c', 'import hashlib; hashlib.sha256(b"ECDAT_RUNTIME_PROBE").hexdigest()']
+    return RuntimeTracer.execute_instrumented_run(cmd).model_dump()
+
+
+@router.get('/experimental/ebpf-capabilities')
+def ebpf_capabilities():
+    return EbpfTracer.inspect_capabilities().model_dump()
+
+
+class EbpfTraceRequest(BaseModel):
+    target_pid: int | None = None
+    library_path: str = '/lib/x86_64-linux-gnu/libcrypto.so.3'
+    duration_seconds: float = Field(default=2.0, ge=0.5, le=30.0)
+
+
+@router.post('/experimental/ebpf-trace')
+def run_ebpf_trace(req: EbpfTraceRequest):
+    return EbpfTracer.trace_process(req.target_pid, req.library_path, req.duration_seconds).model_dump()
+
+
+class CustomCryptoRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=500_000)
+    file_path: str = Field(default='custom_crypto.py', max_length=300)
+
+
+@router.post('/experimental/custom-crypto')
+def detect_custom_crypto(req: CustomCryptoRequest):
+    return CustomCryptoDetector.analyze_snippet(req.code, req.file_path).model_dump()
+
+
+@router.get('/experimental/custom-crypto/benchmark')
+def custom_crypto_benchmark():
+    return CustomCryptoDetector.run_benchmark().model_dump()
+
+
+class AutoPatchRequest(BaseModel):
+    source_code: str = Field(min_length=1, max_length=500_000)
+    file_path: str = Field(default='app.py', max_length=300)
+    language: str = 'python'
+    run_tests: bool = True
+
+
+@router.post('/experimental/autopatch')
+def generate_autopatch(req: AutoPatchRequest):
+    patch = AutoPatchEngine.create_patch(req.source_code, req.file_path, req.language)
+    if not patch:
+        raise HTTPException(404, 'No applicable safe migration template matched the code.')
+    if req.run_tests:
+        patch = AutoPatchEngine.run_regression_test(patch)
+    return patch.model_dump()
+
+
+class QuantumEstimationRequest(BaseModel):
+    target_algorithm: str = Field(default='RSA-2048', max_length=50)
+    physical_error_rate: float = Field(default=1e-3, gt=0, le=0.01)
+    cycle_time_us: float = Field(default=1.0, gt=0, le=1000.0)
+
+
+@router.post('/risk/quantum-estimation')
+def estimate_quantum_resources(req: QuantumEstimationRequest):
+    return QuantumResourceEstimator.estimate_resources(
+        req.target_algorithm, req.physical_error_rate, req.cycle_time_us
+    ).model_dump()
+
+
+@router.get('/risk/quantum-estimation/targets')
+def list_quantum_estimation_targets():
+    return QuantumResourceEstimator.list_supported_targets()
+
+
+class BinaryMLRequest(BaseModel):
+    raw_hex: str = Field(min_length=2, max_length=MAX_BYTES * 2)
+    file_name: str = Field(default='binary.bin', max_length=300)
+
+
+@router.post('/experimental/binary-ml')
+def classify_binary_ml(req: BinaryMLRequest):
+    try:
+        raw = bytes.fromhex(req.raw_hex)
+    except ValueError:
+        raise HTTPException(422, 'Invalid hex data')
+    return BinaryMLClassifier.classify_binary(raw, req.file_name).model_dump()
+
+
+@router.post('/demo/sih-flow')
+def run_sih_demo():
+    return SihDemoRunner.run_full_flow().model_dump()
 
 
 app.include_router(router, prefix='/api')

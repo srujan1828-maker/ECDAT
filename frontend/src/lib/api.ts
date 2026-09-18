@@ -69,13 +69,177 @@ export type ScanResult = {
 export type Scan = {
   id: string;
   project: string;
-  kind: "code" | "network" | "binary";
+  kind: "code" | "network" | "binary" | "pcap";
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   created_at: string;
   input_hash: string;
   engine_version: string;
   result: ScanResult | null;
   error: string | null;
+};
+
+export type EvidenceRecord = {
+  asset_id: string;
+  asset_type: string;
+  algorithm: string;
+  cryptographic_role: string;
+  source_surface: string;
+  evidence_type: string;
+  location_endpoint: string;
+  confidence: string;
+  timestamp: string;
+  input_hash: string;
+  engine_version: string;
+  severity: string;
+  description: string;
+  quantum_vulnerable: boolean | null;
+  provenance: {
+    detector_engine: string;
+    detection_technique?: string;
+    rule_or_signature?: string;
+    raw_match?: string;
+    parameters?: Record<string, unknown>;
+  };
+};
+
+export type DiffItem = {
+  primitive: string;
+  category: string;
+  surface: string;
+  location: string;
+  severity: string;
+  description: string;
+  evidence_id?: string;
+};
+
+export type VerificationReport = {
+  verdict: "VERIFIED" | "NOT_VERIFIED" | "INCONCLUSIVE";
+  confidence: string;
+  rationale: string;
+  baseline_scan_ids: string[];
+  post_migration_scan_ids: string[];
+  timestamp: string;
+  retired_weaknesses: DiffItem[];
+  introduced_protections: DiffItem[];
+  persisting_risks: DiffItem[];
+  regressions: DiffItem[];
+  summary: {
+    baseline_total: number;
+    post_migration_total: number;
+    baseline_weak_count: number;
+    retired_weaknesses_count: number;
+    persisting_risks_count: number;
+    regressions_count: number;
+    introduced_protections_count: number;
+    risk_reduction_percentage: number;
+  };
+  audit_notes: string[];
+};
+
+export type RegulatoryControl = {
+  standard: string;
+  jurisdiction: string;
+  requirement: string;
+  deadline_or_milestone?: string;
+  applies_to: string;
+  status: string;
+  source_url: string;
+};
+
+export type StandardMapping = {
+  category: string;
+  legacy_primitive: string;
+  target_standard: string;
+  security_strength_bits: number;
+  controls: RegulatoryControl[];
+  guidance: string;
+};
+
+export type QuantumResourceEstimate = {
+  target_algorithm: string;
+  key_size_bits: number;
+  attack_type: string;
+  logical_qubits: number;
+  physical_qubits_estimate: number;
+  toffoli_gate_count: number;
+  surface_code_distance: number;
+  physical_error_rate_assumed: number;
+  surface_code_cycle_time_us: number;
+  estimated_runtime_hours: number;
+  uncertainty_range_hours: string;
+  literature_citations: string[];
+  assumptions: string[];
+  disclaimer: string;
+};
+
+export type MigrationPatch = {
+  pattern_id: string;
+  target_language: string;
+  file_path: string;
+  original_code: string;
+  patched_code: string;
+  unified_diff: string;
+  transformation_description: string;
+  generated_regression_test: string;
+  verification_status: string;
+  test_output?: string;
+  re_scan_summary?: {
+    previous_findings_count: number;
+    remaining_findings_count: number;
+    status: string;
+  };
+};
+
+export type CustomCryptoFinding = {
+  file_path: string;
+  line_number: number;
+  candidate_snippet: string;
+  classification: string;
+  is_custom_crypto: boolean;
+  confidence: number;
+  explanation: string;
+  human_review_status: string;
+  detection_method: string;
+};
+
+export type BenchmarkMetrics = {
+  total_samples: number;
+  true_positives: number;
+  false_positives: number;
+  true_negatives: number;
+  false_negatives: number;
+  precision: number;
+  recall: number;
+  f1_score: number;
+  accuracy: number;
+  details: Array<{
+    id: string;
+    name: string;
+    actual: boolean;
+    predicted: boolean;
+    verdict: string;
+    confidence: number;
+    explanation: string;
+  }>;
+};
+
+export type SihDemoStep = {
+  step_number: number;
+  title: string;
+  summary: string;
+  data: Record<string, unknown>;
+};
+
+export type SihDemoExecution = {
+  status: string;
+  total_steps: number;
+  steps: SihDemoStep[];
+  cbom: {
+    components?: Array<Record<string, unknown>>;
+    [key: string]: unknown;
+  };
+  verification: VerificationReport;
+  runtime_trace_summary: Record<string, unknown>;
 };
 
 export async function requestApi<T>(
