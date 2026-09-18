@@ -14,6 +14,33 @@ _backend_dir = str(Path(__file__).resolve().parent)
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
+try:
+    import yaml
+except ImportError:
+    import json
+
+    class _YamlCompat:
+        @staticmethod
+        def safe_load(stream):
+            text = stream.read() if hasattr(stream, "read") else stream
+            if hasattr(stream, "name"):
+                try:
+                    json_path = Path(stream.name).with_suffix(".json")
+                    if json_path.exists():
+                        with open(json_path, "r", encoding="utf-8") as jf:
+                            return json.load(jf)
+                except Exception:
+                    pass
+            try:
+                return json.loads(text)
+            except Exception:
+                return {}
+
+    import types
+    _compat_mod = types.ModuleType("yaml")
+    _compat_mod.safe_load = _YamlCompat.safe_load
+    sys.modules["yaml"] = _compat_mod
+
 from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
