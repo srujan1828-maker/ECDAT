@@ -23,13 +23,17 @@ import {
   LoaderCircle,
   AlertTriangle,
 } from "lucide-react";
-import { requestApi, Scan, ScanResult } from "@/lib/api";
+import { requestApi, Scan } from "@/lib/api";
 import Link from "next/link";
-import { PostQuantumEvidence } from "@/components/ecdat/evidence-panels";
 import { ThemeToggle } from "@/components/ecdat/theme-toggle";
 import { Overview } from "@/components/ecdat/overview";
 import { MigrationPlanner } from "@/components/ecdat/migration-planner";
-import { LayoutDashboard, Route } from "lucide-react";
+import { LayoutDashboard, Route, FlaskConical, Scale, FileCheck2, PlayCircle } from "lucide-react";
+import { VerificationPanel } from "@/components/ecdat/verification-panel";
+import { StandardsPanel } from "@/components/ecdat/standards-panel";
+import { ExperimentalHub } from "@/components/ecdat/experimental-hub";
+import { SihDemoPanel } from "@/components/ecdat/sih-demo-panel";
+import { FeatureScanHistory } from "@/components/ecdat/feature-scan-history";
 
 const inputClass =
   "w-full min-w-0 rounded-md border border-subtle bg-canvas px-3 py-2.5 text-sm text-foreground placeholder:text-quiet outline-none transition-colors focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15";
@@ -76,7 +80,12 @@ const scanTypes = [
     ],
   },
 ] as const;
-const kindLabels = { network: "Network", code: "Code", binary: "Binary" };
+const kindLabels: Record<string, string> = {
+  network: "Network",
+  code: "Code",
+  binary: "Binary",
+  pcap: "Passive PCAP",
+};
 const languageLabels: Record<string, string> = {
   python: "Python",
   java: "Java",
@@ -131,9 +140,9 @@ const languageExtensions: Record<string, string> = {
 };
 
 export default function Dashboard() {
-  const [view, setView] = useState<"overview" | "scans" | "migration">(
-    "overview",
-  );
+  const [view, setView] = useState<
+    "overview" | "scans" | "history" | "migration" | "verification" | "standards" | "experimental" | "sih_demo"
+  >("overview");
   const [projectInput, setProjectInput] = useState("default");
   const [project, setProject] = useState("default");
   const [token, setToken] = useState("");
@@ -149,11 +158,19 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [exportIds, setExportIds] = useState<string[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<"all" | Scan["kind"]>(
+    "all",
+  );
 
   useEffect(() => {
     function readHash() {
       const hash = window.location.hash.slice(1);
       if (hash === "migration") setView("migration");
+      else if (hash === "verify" || hash === "verification") setView("verification");
+      else if (hash === "standards") setView("standards");
+      else if (hash === "experimental") setView("experimental");
+      else if (hash === "sih_demo" || hash === "sih-demo") setView("sih_demo");
+      else if (hash === "history") setView("history");
       else if (["network", "code", "binary"].includes(hash)) {
         setMode(hash as "network" | "code" | "binary");
         setView("scans");
@@ -254,15 +271,6 @@ export default function Dashboard() {
     }
   }
 
-  async function cancel(id: string) {
-    try {
-      await requestApi(`/scans/${id}/cancel`, project, token, {});
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   async function download() {
     setError("");
     try {
@@ -283,26 +291,40 @@ export default function Dashboard() {
     }
   }
 
-  const current = scans.find((s) => s.id === selected);
-  const result: ScanResult | null = current?.result || null;
-  const findings = result?.findings || result?.detections || [];
-  const completed = scans.filter((s) => s.status === "completed");
-  const running = scans.filter((s) => ["queued", "running"].includes(s.status));
+  async function downloadSingle(scan: Scan) {
+    setError("");
+    try {
+      const label = scanLabel(scan).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const data = await requestApi("/export/cbom", project, token, {
+        scan_ids: [scan.id],
+        target_name: `${project}-${label}`,
+      });
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${project}-${label}-cbom.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const featureScans = scans.filter((scan) => scan.kind === mode);
+  const historyCurrent = scans.find((s) => s.id === selected);
+  const completed = featureScans.filter((s) => s.status === "completed");
+  const running = featureScans.filter((s) =>
+    ["queued", "running"].includes(s.status),
+  );
+  const historyScans =
+    historyFilter === "all"
+      ? scans
+      : scans.filter((scan) => scan.kind === historyFilter);
 
   const activeType = scanTypes.find((type) => type.id === mode)!;
-  const failed = scans.filter((scan) => scan.status === "failed");
-  const coverage = Array.isArray(result?.coverage)
-    ? (result.coverage as {
-        file?: string;
-        status?: string;
-        engine?: string;
-        error?: string;
-      }[])
-    : [];
-  const confidenceLabel = (value?: string) =>
-    ({ low: "Low", medium: "Medium", high: "High" })[
-      value?.toLowerCase() || ""
-    ] || "Not assessed";
+  const failed = featureScans.filter((scan) => scan.status === "failed");
 
   return (
     <div className="workspace-shell min-h-screen bg-canvas text-foreground lg:flex">
@@ -323,32 +345,19 @@ export default function Dashboard() {
             v3
           </span>
         </div>
-        <nav aria-label="Workspace navigation" className="p-3 lg:flex-1">
+        <nav aria-label="Workspace navigation" className="overflow-y-auto p-3 lg:flex-1">
+          <p className="nav-group-label">Overview</p>
           <div className="mb-4 grid grid-cols-2 gap-1 lg:grid-cols-1">
-            {(
-              [
-                {
-                  id: "overview",
-                  label: "Command center",
-                  Icon: LayoutDashboard,
-                },
-                { id: "migration", label: "Migration planner", Icon: Route },
-              ] as const
-            ).map(({ id, label, Icon }) => (
-              <button
-                key={id}
-                onClick={() => setView(id)}
-                aria-current={view === id ? "page" : undefined}
-                className={`flex items-center gap-3 rounded-md border px-3 py-3 text-xs font-semibold ${view === id ? "border-subtle bg-surface-raised text-foreground" : "border-transparent text-quiet hover:bg-surface-raised"}`}
-              >
-                <Icon size={16} />
-                {label}
-              </button>
-            ))}
+            <button
+              onClick={() => setView("overview")}
+              aria-current={view === "overview" ? "page" : undefined}
+              className={`flex items-center gap-3 rounded-md border px-3 py-3 text-xs font-semibold ${view === "overview" ? "border-subtle bg-surface-raised text-foreground" : "border-transparent text-quiet hover:bg-surface-raised"}`}
+            >
+              <LayoutDashboard size={16} />
+              Command center
+            </button>
           </div>
-          <p className="mb-2 hidden px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-quiet lg:block">
-            Workspace
-          </p>
+          <p className="nav-group-label">Discovery</p>
           <div className="grid grid-cols-3 gap-1 lg:grid-cols-1 lg:gap-1.5">
             {scanTypes.map(({ id, label, description, icon: Icon }) => (
               <button
@@ -378,17 +387,61 @@ export default function Dashboard() {
               </button>
             ))}
           </div>
-          <a
-            href="#scan-history"
-            onClick={() => setView("scans")}
-            className="mt-3 hidden items-center gap-3 rounded-md px-3 py-3 text-xs font-medium text-quiet hover:bg-surface-raised hover:text-foreground lg:flex"
+          <p className="nav-group-label nav-group-action">Action & Verification</p>
+          <button
+            onClick={() => setView("migration")}
+            aria-current={view === "migration" ? "page" : undefined}
+            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "migration" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+          >
+            <Route size={16} />
+            Migration planner
+          </button>
+          <button
+            onClick={() => setView("verification")}
+            aria-current={view === "verification" ? "page" : undefined}
+            className={`mt-1.5 flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "verification" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+          >
+            <FileCheck2 size={16} />
+            Verification engine
+          </button>
+          <p className="nav-group-label nav-group-action">Compliance</p>
+          <button
+            onClick={() => setView("standards")}
+            aria-current={view === "standards" ? "page" : undefined}
+            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "standards" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+          >
+            <Scale size={16} />
+            Standards & mandates
+          </button>
+          <p className="nav-group-label nav-group-action">Innovations</p>
+          <button
+            onClick={() => setView("experimental")}
+            aria-current={view === "experimental" ? "page" : undefined}
+            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "experimental" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+          >
+            <FlaskConical size={16} />
+            Experimental hub
+          </button>
+          <button
+            onClick={() => setView("sih_demo")}
+            aria-current={view === "sih_demo" ? "page" : undefined}
+            className={`mt-1.5 flex w-full items-center gap-3 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2.5 text-left text-xs font-semibold text-teal hover:bg-cyan-500/20`}
+          >
+            <PlayCircle size={16} className="text-teal" />
+            SIH 10-step demo
+          </button>
+          <p className="nav-group-label nav-group-action">Reports</p>
+          <button
+            onClick={() => setView("history")}
+            aria-current={view === "history" ? "page" : undefined}
+            className={`mt-1.5 hidden w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs font-medium lg:flex ${view === "history" ? "bg-cyan-500/10 text-teal" : "text-quiet hover:bg-surface-raised hover:text-foreground"}`}
           >
             <History size={16} />
             History & reports
             <span className="ml-auto rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[10px]">
               {scans.length}
             </span>
-          </a>
+          </button>
         </nav>
         <div className="border-t border-subtle p-4">
           <details className="group" open>
@@ -471,7 +524,17 @@ export default function Dashboard() {
                 ? "Command center"
                 : view === "migration"
                   ? "Migration planner"
-                  : activeType.label}
+                  : view === "verification"
+                    ? "Closed-loop verification"
+                    : view === "standards"
+                      ? "Standards & regulatory mapping"
+                      : view === "experimental"
+                        ? "Experimental extensions (A–G)"
+                        : view === "sih_demo"
+                          ? "SIH 10-step interactive demo"
+                          : view === "history"
+                            ? "History & reports"
+                            : activeType.label}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -500,10 +563,24 @@ export default function Dashboard() {
                 setView("scans");
               }}
               onInspect={(id) => {
+                const targetScan = scans.find((s) => s.id === id);
+                if (targetScan) {
+                  if (
+                    targetScan.kind === "network" ||
+                    targetScan.kind === "code" ||
+                    targetScan.kind === "binary"
+                  ) {
+                    setMode(targetScan.kind);
+                  }
+                }
                 setSelected(id);
                 setView("scans");
               }}
               onMigration={() => setView("migration")}
+              onVerification={() => setView("verification")}
+              onStandards={() => setView("standards")}
+              onExperimental={() => setView("experimental")}
+              onSihDemo={() => setView("sih_demo")}
             />
           )}
           {view === "migration" && (
@@ -517,6 +594,18 @@ export default function Dashboard() {
                 setView("scans");
               }}
             />
+          )}
+          {view === "verification" && (
+            <VerificationPanel project={project} token={token} />
+          )}
+          {view === "standards" && (
+            <StandardsPanel project={project} token={token} />
+          )}
+          {view === "experimental" && (
+            <ExperimentalHub project={project} token={token} />
+          )}
+          {view === "sih_demo" && (
+            <SihDemoPanel project={project} token={token} />
           )}
           {view !== "scans" && error && (
             <div role="alert" className="ec-alert">
@@ -536,14 +625,14 @@ export default function Dashboard() {
                   </h2>
                   <p className="mt-2 text-sm text-quiet">{activeType.help}</p>
                 </div>
-                <a
-                  href="#scan-history"
+                <button
+                  onClick={() => setView("history")}
                   className="flex items-center gap-1.5 py-2 text-xs text-quiet hover:text-teal"
                 >
                   <History size={14} />
-                  View previous scans
+                  View all scan history
                   <ArrowRight size={12} />
-                </a>
+                </button>
               </div>
               {error && (
                 <div
@@ -664,14 +753,20 @@ export default function Dashboard() {
                           <label className="block min-w-0 rounded-md border border-subtle bg-canvas/50 p-3 text-xs text-foreground">
                             <span className="flex items-center gap-2">
                               <FolderOpen size={14} className="text-teal" />
-                              Or choose a folder
+                              Choose a folder
+                            </span>
+                            <span className="mt-1 block text-[10px] text-quiet">
+                              Select a source folder to include its files.
+                            </span>
+                            <span className="mt-3 inline-flex rounded bg-surface-raised px-2 py-1.5 text-[11px] font-medium text-foreground">
+                              Choose folder
                             </span>
                             <input
                               type="file"
                               multiple
                               {...{ webkitdirectory: "" }}
-                              aria-label="Source folder"
-                              className="mt-3 block w-full min-w-0 text-[11px] text-quiet file:mr-2 file:rounded file:border-0 file:bg-surface-raised file:px-2 file:py-1.5 file:text-foreground"
+                              aria-label="Choose source folder"
+                              className="sr-only"
                               onChange={(e) =>
                                 setSourceFiles(Array.from(e.target.files || []))
                               }
@@ -804,51 +899,160 @@ export default function Dashboard() {
                 </aside>
               </div>
 
+              {/* Feature-Specific Scan History: Shows ONLY this feature's scans and findings */}
+              <FeatureScanHistory
+                mode={mode}
+                scans={scans}
+                selectedId={selected}
+                onSelectScan={(id) => setSelected(id)}
+                exportIds={exportIds}
+                onToggleExport={(id) => {
+                  setExportIds((ids) =>
+                    ids.includes(id)
+                      ? ids.filter((x) => x !== id)
+                      : [...ids, id],
+                  );
+                }}
+                onRescanTarget={(newTarget) => {
+                  if (mode === "network") {
+                    setTarget(newTarget);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }
+                }}
+                onDownloadSingleCbom={(scan) => void downloadSingle(scan)}
+                onRefresh={() => void refresh()}
+              />
+            </>
+          )}
+          {view === "history" && (
+            <section
+              className="space-y-5"
+              aria-labelledby="history-page-heading"
+            >
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="mb-1.5 text-[10px] uppercase tracking-[0.18em] text-teal">
+                    {project} / reporting
+                  </p>
+                  <h2
+                    id="history-page-heading"
+                    className="text-xl font-semibold tracking-tight sm:text-2xl"
+                  >
+                    History & reports
+                  </h2>
+                  <p className="mt-2 max-w-2xl text-sm text-quiet">
+                    A consolidated record of every network, source code, and
+                    firmware scan in this project. Filter the record without
+                    mixing feature-specific scan workspaces.
+                  </p>
+                </div>
+                <button
+                  className="flex items-center gap-2 rounded-md border border-subtle px-3 py-2 text-xs text-quiet hover:bg-surface-raised hover:text-teal"
+                  onClick={() => void refresh()}
+                >
+                  <RefreshCw size={14} /> Refresh records
+                </button>
+              </div>
+              {error && (
+                <div role="alert" className="ec-alert">
+                  <AlertTriangle size={16} />
+                  {error}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {(["network", "code", "binary"] as const).map(
+                  (kind) => {
+                    const Icon = scanTypes.find(
+                      (type) => type.id === kind,
+                    )!.icon;
+                    return (
+                      <button
+                        key={kind}
+                        onClick={() =>
+                          setHistoryFilter(
+                            historyFilter === kind ? "all" : kind,
+                          )
+                        }
+                        className={`${panelClass} p-4 text-left transition-colors ${historyFilter === kind ? "border-cyan-500/40 bg-cyan-500/5" : "hover:bg-surface-raised"}`}
+                      >
+                        <div className="flex items-center justify-between text-quiet">
+                          <span className="text-[11px]">
+                            {kindLabels[kind]}
+                          </span>
+                          <Icon size={15} className="text-teal" />
+                        </div>
+                        <p className="mt-2 font-mono text-2xl font-semibold">
+                          {scans.filter((scan) => scan.kind === kind).length}
+                        </p>
+                        <p className="mt-1 text-[10px] text-quiet">
+                          {kind === "binary"
+                            ? "Firmware records"
+                            : "Saved scan records"}
+                        </p>
+                      </button>
+                    );
+                  },
+                )}
+                <div className={`${panelClass} p-4`}>
+                  <p className="text-[11px] text-quiet">Selected for report</p>
+                  <p className="mt-2 font-mono text-2xl font-semibold">
+                    {exportIds.length}
+                  </p>
+                  <p className="mt-1 text-[10px] text-quiet">
+                    Across all scan types
+                  </p>
+                </div>
+              </div>
               <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                 <section
-                  id="scan-history"
-                  className={`${panelClass} scroll-mt-5`}
-                  aria-labelledby="history-heading"
+                  className={panelClass}
+                  aria-labelledby="all-history-heading"
                 >
-                  <div className="flex items-center justify-between gap-2 border-b border-subtle px-5 py-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-subtle px-5 py-3.5">
                     <h3
-                      id="history-heading"
+                      id="all-history-heading"
                       className="flex items-center gap-2 text-sm font-semibold"
                     >
-                      <span className="flex h-5 w-5 items-center justify-center rounded border border-subtle text-[10px] text-quiet">
-                        2
-                      </span>
-                      Scan history
+                      <History size={15} className="text-teal" />
+                      All scan records
                     </h3>
-                    <button
-                      aria-label="Refresh scans"
-                      title="Refresh scans"
-                      className="rounded p-1.5 text-quiet hover:bg-surface-raised hover:text-teal"
-                      onClick={() => void refresh()}
-                    >
-                      <RefreshCw size={14} />
-                    </button>
+                    <div className="flex gap-1">
+                      {(["all", "network", "code", "binary"] as const).map(
+                        (filter) => (
+                          <button
+                            key={filter}
+                            onClick={() => setHistoryFilter(filter)}
+                            className={`rounded px-2 py-1 text-[10px] capitalize ${historyFilter === filter ? "bg-cyan-500/10 text-teal" : "text-quiet hover:bg-surface-raised"}`}
+                          >
+                            {filter === "code"
+                              ? "Source code"
+                              : filter === "binary"
+                                ? "Firmware"
+                                : filter}
+                          </button>
+                        ),
+                      )}
+                    </div>
                   </div>
                   <p className="border-b border-subtle px-5 py-3 text-[11px] text-quiet">
-                    Click a scan to view results. Tick completed scans to
-                    include in a report.
+                    Select completed records for one consolidated CycloneDX
+                    report. {historyScans.length} record
+                    {historyScans.length === 1 ? "" : "s"} shown.
                   </p>
-                  {!scans.length ? (
+                  {!historyScans.length ? (
                     <div className="px-5 py-12 text-center">
                       <History size={25} className="mx-auto text-quiet" />
-                      <p className="mt-3 text-sm text-foreground">
-                        Your scans will appear here
-                      </p>
+                      <p className="mt-3 text-sm">No matching records</p>
                       <p className="mt-1 text-xs text-quiet">
-                        Start with a website, code, or a file above.
+                        Run a scan in the corresponding feature to add it here.
                       </p>
                     </div>
                   ) : (
-                    <div className="max-h-[460px] overflow-auto divide-y divide-[var(--ecdat-border-subtle)]">
-                      {scans.map((scan) => (
+                    <div className="max-h-[540px] divide-y divide-[var(--ecdat-border-subtle)] overflow-auto">
+                      {historyScans.map((scan) => (
                         <div
                           key={scan.id}
-                          className={`border-l-2 px-4 py-3 transition-colors ${selected === scan.id ? "border-l-cyan-500 bg-cyan-500/5" : "border-l-transparent hover:bg-surface-raised/30"}`}
+                          className={`border-l-2 px-4 py-3 ${selected === scan.id ? "border-l-cyan-500 bg-cyan-500/5" : "border-l-transparent hover:bg-surface-raised/30"}`}
                         >
                           <div className="flex items-center gap-3">
                             <input
@@ -866,13 +1070,10 @@ export default function Dashboard() {
                               }
                             />
                             <button
-                              className="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-cyan-500"
                               onClick={() => setSelected(scan.id)}
+                              className="min-w-0 flex-1 text-left"
                             >
-                              <span
-                                className="block truncate text-xs font-medium text-foreground"
-                                title={scanLabel(scan)}
-                              >
+                              <span className="block truncate text-xs font-medium">
                                 {scanLabel(scan)}
                               </span>
                               <span className="mt-1 block text-[10px] text-quiet">
@@ -882,319 +1083,181 @@ export default function Dashboard() {
                             </button>
                             <StatusBadge status={scan.status} />
                           </div>
-                          {["queued", "running"].includes(scan.status) && (
-                            <button
-                              className="ml-6 mt-2 text-[11px] text-quiet underline underline-offset-2 hover:text-foreground"
-                              onClick={() => void cancel(scan.id)}
-                            >
-                              Cancel scan
-                            </button>
-                          )}
                         </div>
                       ))}
                     </div>
                   )}
-                  <div className="space-y-3 border-t border-subtle bg-canvas/30 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-medium text-foreground">
-                          3. Download your report
-                        </p>
-                        <p className="mt-1 text-[11px] text-quiet">
-                          {exportIds.length
-                            ? `${exportIds.length} scan${exportIds.length === 1 ? "" : "s"} selected`
-                            : "Select completed scans above"}
-                        </p>
-                      </div>
-                      <button
-                        className={`${buttonClass} !text-xs`}
-                        disabled={!exportIds.length}
-                        onClick={() => void download()}
-                      >
-                        <Download size={14} />
-                        Download CBOM
-                      </button>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle bg-canvas/30 p-4">
+                    <div>
+                      <p className="text-xs font-medium">
+                        Download consolidated report
+                      </p>
+                      <p className="mt-1 text-[11px] text-quiet">
+                        {exportIds.length
+                          ? `${exportIds.length} completed scan${exportIds.length === 1 ? "" : "s"} selected`
+                          : "Select completed records above"}
+                      </p>
                     </div>
-                    <p className="text-[10px] text-quiet">
-                      CBOM is a cryptography inventory, saved as CycloneDX JSON.
-                      History shows the latest 200 scans.
-                    </p>
+                    <button
+                      className={`${buttonClass} !text-xs`}
+                      disabled={!exportIds.length}
+                      onClick={() => void download()}
+                    >
+                      <Download size={14} />
+                      Download CBOM
+                    </button>
                   </div>
                 </section>
-
                 <section
                   className={panelClass}
-                  aria-labelledby="results-heading"
+                  aria-labelledby="record-details-heading"
                 >
                   <div className="flex items-center justify-between border-b border-subtle px-5 py-3.5">
                     <h3
-                      id="results-heading"
+                      id="record-details-heading"
                       className="flex items-center gap-2 text-sm font-semibold"
                     >
                       <FileCode2 size={15} className="text-teal" />
-                      Scan results
+                      Record details
                     </h3>
-                    {current && <StatusBadge status={current.status} />}
+                    {historyCurrent && (
+                      <StatusBadge status={historyCurrent.status} />
+                    )}
                   </div>
-                  {!current ? (
+                  {!historyCurrent ? (
                     <div className="px-5 py-16 text-center">
                       <Search size={28} className="mx-auto text-quiet" />
-                      <p className="mt-3 text-sm text-foreground">
-                        Select a scan to see what was found
-                      </p>
-                      <p className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-quiet">
-                        Findings, affected files, and analysis coverage will
-                        appear here.
+                      <p className="mt-3 text-sm">
+                        Select a record to review its results
                       </p>
                     </div>
                   ) : (
                     <div className="space-y-4 p-5">
                       <div>
                         <p className="break-all text-sm font-medium">
-                          {scanLabel(current)}
+                          {scanLabel(historyCurrent)}
                         </p>
                         <p className="mt-1 text-[11px] text-quiet">
-                          {new Date(current.created_at).toLocaleString()}
+                          {kindLabels[historyCurrent.kind]} ·{" "}
+                          {new Date(historyCurrent.created_at).toLocaleString()}
                         </p>
                       </div>
-                      {current.error && (
+                      {historyCurrent.error && (
                         <div
                           role="alert"
-                          className="rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs leading-relaxed text-danger"
+                          className="rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs text-danger"
                         >
-                          <p className="mb-1 font-semibold">
-                            This scan could not finish
-                          </p>
-                          {current.error}
+                          {historyCurrent.error}
                         </div>
                       )}
-                      {current.status === "cancelled" && (
-                        <p className="rounded-md bg-surface-raised p-3 text-xs leading-relaxed text-quiet">
-                          Result collection was cancelled. An operation already
-                          in progress may finish in the background.
-                        </p>
-                      )}
-                      {["running", "queued"].includes(current.status) && (
-                        <div
-                          role="status"
-                          className="flex items-center gap-2 rounded-md border border-cyan-500/20 bg-cyan-500/5 p-4 text-xs text-teal"
-                        >
-                          <LoaderCircle
-                            size={15}
-                            className="motion-safe:animate-spin"
-                          />
-                          {current.status === "running"
-                            ? "Scanning your input. Results update automatically."
-                            : "Waiting for a scanner to become available."}
-                        </div>
-                      )}
-                      {result && (
+                      {historyCurrent.result ? (
                         <>
-                          {current.kind === "network" ? (
-                            <div className="grid gap-2 sm:grid-cols-2">
-                              {[
-                                [
-                                  "TLS version",
-                                  result.protocol || "Not measured",
-                                ],
-                                [
-                                  "Encryption",
-                                  result.cipher_name || "Not measured",
-                                ],
-                                [
-                                  "Certificate trust",
-                                  result.certificate?.trust_validated === true
-                                    ? "Verified"
-                                    : result.certificate?.trust_validated ===
-                                        false
-                                      ? "Not verified"
-                                      : "Not checked",
-                                ],
-                                [
-                                  "Post-quantum support",
-                                  result.pqc_status || "Unknown",
-                                ],
-                              ].map(([label, value]) => (
-                                <div
-                                  key={label}
-                                  className="rounded-md border border-subtle bg-canvas/50 p-3"
-                                >
-                                  <p className="text-[10px] text-quiet">
-                                    {label}
-                                  </p>
-                                  <p className="mt-1 break-words text-xs text-foreground">
-                                    {value}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
+                          <div className="grid grid-cols-2 gap-2">
                             <div className="rounded-md border border-subtle bg-canvas/50 p-3">
-                              <p className="text-sm font-medium">
-                                {findings.length} finding
-                                {findings.length === 1 ? "" : "s"}
-                              </p>
-                              <p className="mt-1 text-[11px] leading-relaxed text-quiet">
-                                {findings.length
-                                  ? "Review the evidence below before deciding what to change."
-                                  : "No matching indicators were found. This does not guarantee the input is safe."}
-                              </p>
-                            </div>
-                          )}
-                          {result.status === "partial" && (
-                            <p className="flex gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-warning">
-                              <AlertTriangle size={14} className="shrink-0" />
-                              Some files could not be fully checked. See scan
-                              coverage below.
-                            </p>
-                          )}
-                          <div className="space-y-2">
-                            {findings.map((finding, index) => (
-                              <article
-                                key={index}
-                                className="rounded-md border border-subtle bg-canvas/40 p-4"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <h4 className="text-xs font-semibold">
-                                    {finding.primitive}
-                                  </h4>
-                                  <span
-                                    className={`rounded border px-1.5 py-0.5 text-[10px] ${finding.severity === "CRITICAL" ? "border-red-500/20 bg-red-500/10 text-danger" : finding.severity === "HIGH" ? "border-orange-500/20 bg-orange-500/10 text-orange-300" : finding.severity === "LOW" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" : "border-amber-500/20 bg-amber-500/10 text-warning"}`}
-                                  >
-                                    {finding.severity || "Unrated"}
-                                  </span>
-                                </div>
-                                <p className="mt-2 break-all font-mono text-[11px] text-teal">
-                                  {finding.file}
-                                  {finding.line
-                                    ? ` · line ${finding.line}`
-                                    : finding.offset
-                                      ? ` · ${finding.offset}`
-                                      : ""}
-                                </p>
-                                <p className="mt-2 text-xs leading-relaxed text-quiet">
-                                  {finding.issue || finding.description}
-                                </p>
-                                <p className="mt-3 text-[10px] text-quiet">
-                                  Confidence:{" "}
-                                  {confidenceLabel(finding.confidence)}
-                                  {finding.engine === "regex-heuristic"
-                                    ? " · Pattern match — review recommended"
-                                    : finding.engine === "python-ast"
-                                      ? " · Python code analysis"
-                                      : ""}
-                                </p>
-                              </article>
-                            ))}
-                          </div>
-                          {coverage.length > 0 && (
-                            <details
-                              className="rounded-md border border-subtle"
-                              open={result.status === "partial"}
-                            >
-                              <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
-                                Scan coverage ·{" "}
+                              <p className="text-[10px] text-quiet">Findings</p>
+                              <p className="mt-1 text-lg font-semibold">
                                 {
-                                  coverage.filter((file) =>
-                                    ["scanned", "inventory"].includes(
-                                      file.status || "",
-                                    ),
+                                  (
+                                    historyCurrent.result.findings ||
+                                    historyCurrent.result.detections ||
+                                    []
                                   ).length
-                                }{" "}
-                                of {coverage.length} files checked
-                              </summary>
-                              <div className="overflow-x-auto border-t border-subtle">
-                                <table className="w-full text-left text-[11px]">
-                                  <thead className="bg-canvas/50 text-quiet">
-                                    <tr>
-                                      <th className="px-3 py-2 font-normal">
-                                        File
-                                      </th>
-                                      <th className="px-3 py-2 font-normal">
-                                        Result
-                                      </th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {coverage.map((file, index) => (
-                                      <tr
-                                        key={index}
-                                        className="border-t border-subtle"
-                                      >
-                                        <td className="max-w-64 break-words px-3 py-2 text-quiet">
-                                          {file.file}
-                                        </td>
-                                        <td className="px-3 py-2 text-quiet">
-                                          {file.status === "scanned"
-                                            ? "Checked"
-                                            : file.status === "inventory"
-                                              ? "Dependencies listed"
-                                              : file.status === "unsupported"
-                                                ? "Not supported"
-                                                : "Could not check"}
-                                          {file.error && (
-                                            <span className="mt-1 block text-warning">
-                                              {file.error}
-                                            </span>
-                                          )}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                                }
+                              </p>
+                            </div>
+                            <div className="rounded-md border border-subtle bg-canvas/50 p-3">
+                              <p className="text-[10px] text-quiet">
+                                Scan type
+                              </p>
+                              <p className="mt-1 text-sm font-medium">
+                                {kindLabels[historyCurrent.kind]}
+                              </p>
+                            </div>
+                          </div>
+                          {historyCurrent.kind === "network" && (
+                            <>
+                              <div className="rounded-md border border-subtle bg-canvas/50 p-3 text-xs">
+                                <p>
+                                  TLS:{" "}
+                                  {historyCurrent.result.protocol ||
+                                    "Not measured"}
+                                </p>
+                                <p className="mt-1">
+                                  Encryption:{" "}
+                                  {historyCurrent.result.cipher_name ||
+                                    "Not measured"}
+                                </p>
                               </div>
-                            </details>
-                          )}
-                          {current.kind === "network" && (
-                            <PostQuantumEvidence
-                              evidence={result.post_quantum}
-                            />
-                          )}
-                          {result.deployment && (
-                            <div className="rounded-md border border-subtle p-3 text-xs">
-                              <h3 className="font-semibold">
-                                Website deployment clues
-                              </h3>
-                              <p className="mt-2 text-quiet">
-                                {result.deployment.status === "observed"
-                                  ? `HTTP ${result.deployment.status_code} · HTTPS root checked`
-                                  : "HTTP inspection unavailable; TLS evidence is still available."}
-                              </p>
-                              <p className="mt-2 text-quiet">
-                                {result.deployment.hosting_hints
-                                  ?.map((h) => h.provider)
-                                  .join(", ") ||
-                                  "No identifiable public hosting hints"}{" "}
-                                · Origin and physical region not proven.
-                              </p>
-                              <button
-                                className="text-action"
-                                onClick={() => setView("migration")}
+                              <div
+                                className={`rounded-md border p-3 text-xs ${historyCurrent.result.quantum_vulnerable === true ? "border-red-500/25 bg-red-500/5 text-danger" : historyCurrent.result.quantum_vulnerable === false ? "border-emerald-500/25 bg-emerald-500/5 text-success" : "border-amber-500/25 bg-amber-500/5 text-warning"}`}
                               >
-                                Build a migration plan <ArrowRight size={13} />
-                              </button>
+                                <p className="font-semibold">
+                                  Post-quantum threat assessment
+                                </p>
+                                <p className="mt-1">
+                                  {historyCurrent.result.quantum_vulnerable ===
+                                  true
+                                    ? "Potentially vulnerable to a post-quantum threat. Prioritize cryptographic migration."
+                                    : historyCurrent.result
+                                          .quantum_vulnerable === false
+                                      ? "No post-quantum vulnerability was identified by this scan."
+                                      : "Not conclusive. The scanner could not determine post-quantum exposure."}
+                                </p>
+                                <p className="mt-2 text-quiet">
+                                  PQC capability:{" "}
+                                  {historyCurrent.result.pqc_status ||
+                                    "Not measured"}
+                                </p>
+                                {historyCurrent.result.hndl_risk && (
+                                  <p className="mt-1 text-quiet">
+                                    Harvest-now, decrypt-later risk:{" "}
+                                    {historyCurrent.result.hndl_risk}
+                                  </p>
+                                )}
+                                {historyCurrent.result.hndl_rationale && (
+                                  <p className="mt-1 leading-relaxed text-quiet">
+                                    {historyCurrent.result.hndl_rationale}
+                                  </p>
+                                )}
+                              </div>
+                            </>
+                          )}
+                          {historyCurrent.kind !== "network" && (
+                            <div className="rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-warning">
+                              <p className="font-semibold">
+                                Post-quantum threat assessment
+                              </p>
+                              <p className="mt-1">
+                                This scan type identifies cryptographic evidence
+                                but does not determine whether the deployed
+                                system is post-quantum vulnerable. Review its
+                                findings and run a network scan for measured TLS
+                                exposure.
+                              </p>
                             </div>
                           )}
-                          <details className="rounded-md border border-subtle">
-                            <summary className="cursor-pointer px-3 py-3 text-xs text-quiet">
-                              Technical details & full evidence
+                          <details
+                            className="rounded-md border border-subtle"
+                            open={historyCurrent.kind === "binary"}
+                          >
+                            <summary className="cursor-pointer px-3 py-3 text-xs font-medium">
+                              Complete{" "}
+                              {historyCurrent.kind === "binary"
+                                ? "firmware"
+                                : "scan"}{" "}
+                              details & evidence
                             </summary>
-                            <pre className="max-h-80 overflow-auto border-t border-subtle bg-canvas/50 p-3 text-[10px] leading-relaxed whitespace-pre-wrap break-all text-quiet">
+                            <pre className="max-h-[420px] overflow-auto border-t border-subtle bg-canvas/50 p-3 text-[10px] leading-relaxed whitespace-pre-wrap break-all text-quiet">
                               {JSON.stringify(
                                 {
-                                  scan_id: current.id,
-                                  engine_version: current.engine_version,
-                                  input_hash: current.input_hash,
-                                  coverage: result.coverage,
-                                  certificate: result.certificate,
-                                  deployment: result.deployment,
-                                  pqc_status: result.pqc_status,
-                                  post_quantum: result.post_quantum,
-                                  protocol_tests: result.protocol_tests,
-                                  cipher_tests: result.cipher_tests,
-                                  dependencies: result.dependencies,
-                                  members: result.members,
-                                  limitations: result.limitations,
+                                  scan_id: historyCurrent.id,
+                                  kind: historyCurrent.kind,
+                                  status: historyCurrent.status,
+                                  created_at: historyCurrent.created_at,
+                                  engine_version: historyCurrent.engine_version,
+                                  input_hash: historyCurrent.input_hash,
+                                  error: historyCurrent.error,
+                                  result: historyCurrent.result,
                                 },
                                 null,
                                 2,
@@ -1202,12 +1265,16 @@ export default function Dashboard() {
                             </pre>
                           </details>
                         </>
+                      ) : (
+                        <p className="rounded-md bg-surface-raised p-3 text-xs text-quiet">
+                          This scan has not produced a result yet.
+                        </p>
                       )}
                     </div>
                   )}
                 </section>
               </div>
-            </>
+            </section>
           )}
           <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-subtle pt-4 text-[10px] text-quiet">
             <span className="flex items-center gap-1.5">

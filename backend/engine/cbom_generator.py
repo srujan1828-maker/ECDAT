@@ -22,13 +22,16 @@ def generate_cyclonedx_cbom(records, target_name='ECDAT Project'):
                 crypto = {'assetType': 'certificate'}
             props = {
                 'ecdat:scanId': record['id'], 'ecdat:sourceType': record['kind'],
+                'ecdat:sourceSurface': finding.get('source_surface', record['kind']),
+                'ecdat:evidenceType': finding.get('evidence_type', 'static_inferred' if record['kind'] in ('code', 'binary') else 'network_observed'),
                 'ecdat:inputHash': record['input_hash'], 'ecdat:engineVersion': record['engine_version'],
                 'ecdat:observedAt': record['created_at'], 'ecdat:file': finding.get('file', ''),
                 'ecdat:line': finding.get('line', ''), 'ecdat:offset': finding.get('offset', ''),
                 'ecdat:confidence': finding.get('confidence', 'observed'),
                 'ecdat:severity': finding.get('severity', 'unassessed'),
                 'ecdat:sourceHash': finding.get('source_hash', ''),
-                'ecdat:section': finding.get('section', '')}
+                'ecdat:section': finding.get('section', ''),
+                'ecdat:quantumVulnerable': str(finding.get('quantum_vulnerable', any(k in upper for k in ('RSA', 'DES', 'MD5', 'SHA1', 'RC4'))))}
             components.append({'type': 'cryptographic-asset', 'bom-ref': f"{record['id']}:{i}",
                 'name': primitive, 'description': finding.get('issue', finding.get('description', 'Observed cryptographic indicator')),
                 'cryptoProperties': crypto,
