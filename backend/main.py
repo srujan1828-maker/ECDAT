@@ -7,7 +7,13 @@ import re
 import secrets
 import sys
 import tempfile
+from pathlib import Path
 from typing import Literal
+
+_backend_dir = str(Path(__file__).resolve().parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator

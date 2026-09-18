@@ -252,22 +252,31 @@ export async function requestApi<T>(
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body && !(body instanceof FormData))
     headers["Content-Type"] = "application/json";
-  const response = await fetch(
-    `/api${path}?project=${encodeURIComponent(project)}`,
-    {
-      method: body === undefined ? "GET" : "POST",
-      headers,
-      body:
-        body instanceof FormData
-          ? body
-          : body === undefined
-            ? undefined
-            : JSON.stringify(body),
-      signal: AbortSignal.timeout(35000),
-      cache: "no-store",
-    },
-  );
-  const data = await response.json();
+
+  const separator = path.includes("?") ? "&" : "?";
+  const url = `/api${path}${separator}project=${encodeURIComponent(project)}`;
+
+  const response = await fetch(url, {
+    method: body === undefined ? "GET" : "POST",
+    headers,
+    body:
+      body instanceof FormData
+        ? body
+        : body === undefined
+          ? undefined
+          : JSON.stringify(body),
+    signal: AbortSignal.timeout(35000),
+    cache: "no-store",
+  });
+
+  let data: any;
+  const text = await response.text();
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { detail: text || `HTTP ${response.status} ${response.statusText}` };
+  }
+
   if (!response.ok)
     throw new Error(
       typeof data.detail === "string"
