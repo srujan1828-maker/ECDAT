@@ -58,6 +58,7 @@ export type ScanResult = {
   target?: string;
   protocol?: string;
   cipher_name?: string;
+  key_exchange?: string;
   pqc_status?: string;
   quantum_vulnerable?: boolean | null;
   hndl_risk?: string;

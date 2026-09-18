@@ -205,6 +205,59 @@ def probe_tls_endpoint(host, port=443, timeout=2.0):
     }
     
     pq = result.get('post_quantum') or {}
+    pq_status = pq.get('status')
+    protocol = result.get('protocol', '')
+    cipher = result.get('cipher_name', '')
+
+    # Derive human-readable Key Exchange summary
+    if pq_status == 'hybrid_supported' and pq.get('supported_groups'):
+        result['key_exchange'] = f"Hybrid PQC ({', '.join(pq['supported_groups'])})"
+    elif cipher and cipher != 'Unknown':
+        if cipher.startswith('ECDHE-'):
+            result['key_exchange'] = 'ECDHE (Classical Elliptic Curve)'
+        elif cipher.startswith('DHE-'):
+            result['key_exchange'] = 'DHE (Classical Finite Field)'
+        elif any(cipher.startswith(prefix) for prefix in ('AES', 'DES', 'RC4', 'NULL')) or 'RSA' in cipher.split('-')[0]:
+            result['key_exchange'] = 'Static RSA (No Forward Secrecy)'
+        elif protocol == 'TLSv1.3':
+            x25519_test = next((t for t in pq.get('tests', []) if t.get('group') == 'X25519'), None)
+            if x25519_test and x25519_test.get('status') == 'negotiated':
+                result['key_exchange'] = 'TLS 1.3 Ephemeral (X25519)'
+            else:
+                result['key_exchange'] = 'TLS 1.3 Classical Ephemeral'
+        else:
+            result['key_exchange'] = f"Classical ({cipher.split('-')[0]})"
+
+    # Conclusive Post-Quantum & HNDL Risk Evaluation
+    if pq_status == 'hybrid_supported':
+        result['quantum_vulnerable'] = False
+        result['hndl_risk'] = 'LOW'
+        result['hndl_rationale'] = (
+            f"Hybrid post-quantum key exchange ({', '.join(pq.get('supported_groups', []))} - FIPS 203 ML-KEM) "
+            "verified in TLS handshake. Key exchange resists retroactive Harvest-Now-Decrypt-Later (HNDL) attacks."
+        )
+    elif pq_status == 'tested_not_negotiated' or protocol in ('TLSv1', 'TLSv1.0', 'TLSv1.1', 'TLSv1.2') or any(k in cipher for k in ('ECDHE', 'DHE', 'RSA', 'ECDH')):
+        result['quantum_vulnerable'] = True
+        is_legacy = any(bad in cipher for bad in ('RC4', 'DES', '3DES', 'MD5', 'NULL')) or cipher.startswith(('AES128-SHA', 'AES256-SHA', 'DES-CBC3-SHA')) or 'RSA_WITH' in cipher
+        if is_legacy:
+            result['hndl_risk'] = 'CRITICAL'
+            result['hndl_rationale'] = (
+                f"Obsolete/static key exchange or broken cipher ({cipher} under {protocol}) detected. "
+                "Lacks forward secrecy; sessions can be decrypted retrospectively with Shor's algorithm on a CRQC."
+            )
+        else:
+            result['hndl_risk'] = 'HIGH'
+            result['hndl_rationale'] = (
+                f"Target negotiated classical key exchange ({cipher} under {protocol}) without NIST FIPS 203 ML-KEM hybrid protection. "
+                "Recorded session ciphertext is vulnerable to Harvest-Now-Decrypt-Later (HNDL) attacks via Shor's algorithm."
+            )
+    elif pq_status == 'scanner_unavailable':
+        result['quantum_vulnerable'] = None
+        result['hndl_risk'] = 'UNKNOWN'
+        result['hndl_rationale'] = (
+            "Scanner runtime cannot probe ML-KEM hybrid groups on TLS 1.3. "
+            "PQC capability requires OpenSSL 3.5+ runtime."
+        )
     for test in pq.get('tests', []):
         st = test.get('status')
         group = test.get('group', 'Hybrid group')

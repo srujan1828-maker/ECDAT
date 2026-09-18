@@ -469,8 +469,19 @@ export function FeatureScanHistory({
                             <span className="text-[10px] uppercase tracking-wider text-quiet">
                               Key Exchange
                             </span>
-                            <div className="mt-1 font-mono text-xs font-bold text-foreground truncate px-1">
-                              {activeScan.result.pqc_status || "Classical"}
+                            <div
+                              className="mt-1 font-mono text-xs font-bold text-foreground truncate px-1"
+                              title={activeScan.result.key_exchange || activeScan.result.pqc_status || "Classical"}
+                            >
+                              {activeScan.result.key_exchange && !activeScan.result.key_exchange.startsWith("Unknown")
+                                ? activeScan.result.key_exchange
+                                : activeScan.result.post_quantum?.supported_groups?.length
+                                  ? `Hybrid PQC (${activeScan.result.post_quantum.supported_groups.join(", ")})`
+                                  : activeScan.result.cipher_name?.includes("ECDHE")
+                                    ? "ECDHE (Classical)"
+                                    : activeScan.result.cipher_name?.includes("DHE")
+                                      ? "DHE (Classical)"
+                                      : "Classical Non-PQC"}
                             </div>
                           </div>
 
@@ -487,68 +498,111 @@ export function FeatureScanHistory({
                         </div>
 
                         {/* Post-Quantum Threat Assessment Card */}
-                        <div
-                          className={`rounded-lg border p-4 text-xs space-y-2.5 ${
-                            activeScan.result.quantum_vulnerable === true
-                              ? "border-red-500/25 bg-red-500/5 text-foreground"
-                              : activeScan.result.quantum_vulnerable === false
-                                ? "border-emerald-500/25 bg-emerald-500/5 text-foreground"
-                                : "border-amber-500/25 bg-amber-500/5 text-foreground"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 font-semibold">
-                            {activeScan.result.quantum_vulnerable === true ? (
-                              <>
-                                <ShieldAlert size={16} className="text-red-400" />
-                                <span className="text-red-400">
-                                  Post-Quantum Threat: Vulnerable to Harvest-Now-Decrypt-Later
-                                </span>
-                              </>
-                            ) : activeScan.result.quantum_vulnerable === false ? (
-                              <>
-                                <ShieldCheck size={16} className="text-emerald-400" />
-                                <span className="text-emerald-400">
-                                  Post-Quantum Ready: Hybrid Key Exchange Active
-                                </span>
-                              </>
-                            ) : (
-                              <>
-                                <CircleHelp size={16} className="text-amber-400" />
-                                <span className="text-amber-400">
-                                  Post-Quantum Assessment Inconclusive
-                                </span>
-                              </>
-                            )}
-                          </div>
+                        {(() => {
+                          const res = activeScan.result;
+                          const hasHybridPqc = Boolean(
+                            res.post_quantum?.supported_groups &&
+                            res.post_quantum.supported_groups.length > 0
+                          );
+                          const isQuantumReady =
+                            res.quantum_vulnerable === false ||
+                            res.pqc_status === "Hybrid PQ key exchange verified" ||
+                            hasHybridPqc;
+                          const isQuantumVulnerable =
+                            res.quantum_vulnerable === true ||
+                            (!isQuantumReady &&
+                              (res.pqc_status === "Tested hybrid groups did not negotiate" ||
+                                res.protocol === "TLSv1.2" ||
+                                res.protocol === "TLSv1.1" ||
+                                res.protocol === "TLSv1.0" ||
+                                (res.cipher_name &&
+                                  (res.cipher_name.includes("ECDHE") ||
+                                    res.cipher_name.includes("RSA") ||
+                                    res.cipher_name.includes("DHE")))));
 
-                          <p className="leading-relaxed text-quiet">
-                            {activeScan.result.quantum_vulnerable === true
-                              ? "The observed TLS session relies entirely on classical asymmetric key exchange (such as RSA or classical ECDH). Recorded ciphertext can be decrypted in the future by a Cryptanalytically Relevant Quantum Computer (CRQC)."
-                              : activeScan.result.quantum_vulnerable === false
-                                ? "This server successfully negotiated hybrid post-quantum key exchange groups conforming to NIST FIPS 203 (ML-KEM). The session resists retroactive decryption."
-                                : "The scanner could not conclusively verify hybrid key exchange support on this target."}
-                          </p>
+                          const hndlRating =
+                            res.hndl_risk && res.hndl_risk !== "UNKNOWN"
+                              ? res.hndl_risk
+                              : isQuantumReady
+                                ? "LOW"
+                                : isQuantumVulnerable
+                                  ? (res.cipher_name?.includes("RC4") || res.cipher_name?.includes("DES") || res.cipher_name?.startsWith("AES128-SHA") ? "CRITICAL" : "HIGH")
+                                  : "UNKNOWN";
 
-                          {activeScan.result.hndl_risk && (
-                            <div className="pt-2 border-t border-subtle flex items-center justify-between text-[11px]">
-                              <span className="text-quiet">
-                                HNDL Risk Rating:{" "}
-                                <strong className="text-foreground">
-                                  {activeScan.result.hndl_risk}
-                                </strong>
-                              </span>
-                              <span className="text-quiet font-mono">
-                                NIST Standard: FIPS 203 (ML-KEM)
-                              </span>
+                          const hndlText =
+                            res.hndl_rationale && !res.hndl_rationale.includes("PQC/HNDL status requires")
+                              ? res.hndl_rationale
+                              : isQuantumReady
+                                ? "Hybrid post-quantum key exchange (FIPS 203 ML-KEM) verified. The session resists retroactive Harvest-Now-Decrypt-Later decryption."
+                                : isQuantumVulnerable
+                                  ? `Target negotiated classical key exchange (${res.cipher_name || "ECDHE"} under ${res.protocol || "TLS"}) without post-quantum hybrid protection (ML-KEM). Recorded ciphertext is vulnerable to Harvest-Now-Decrypt-Later (HNDL) attacks via Shor's algorithm.`
+                                  : res.hndl_rationale || "PQC/HNDL status requires measured key exchange and data-retention context.";
+
+                          return (
+                            <div
+                              className={`rounded-lg border p-4 text-xs space-y-2.5 ${
+                                isQuantumVulnerable
+                                  ? "border-red-500/25 bg-red-500/5 text-foreground"
+                                  : isQuantumReady
+                                    ? "border-emerald-500/25 bg-emerald-500/5 text-foreground"
+                                    : "border-amber-500/25 bg-amber-500/5 text-foreground"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 font-semibold">
+                                {isQuantumVulnerable ? (
+                                  <>
+                                    <ShieldAlert size={16} className="text-red-400" />
+                                    <span className="text-red-400">
+                                      Post-Quantum Threat: Vulnerable to Harvest-Now-Decrypt-Later
+                                    </span>
+                                  </>
+                                ) : isQuantumReady ? (
+                                  <>
+                                    <ShieldCheck size={16} className="text-emerald-400" />
+                                    <span className="text-emerald-400">
+                                      Post-Quantum Ready: Hybrid Key Exchange Active
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CircleHelp size={16} className="text-amber-400" />
+                                    <span className="text-amber-400">
+                                      Post-Quantum Assessment Inconclusive
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+
+                              <p className="leading-relaxed text-quiet">
+                                {isQuantumVulnerable
+                                  ? "The observed TLS session relies entirely on classical asymmetric key exchange (such as RSA or classical ECDH). Recorded ciphertext can be decrypted in the future by a Cryptanalytically Relevant Quantum Computer (CRQC)."
+                                  : isQuantumReady
+                                    ? "This server successfully negotiated hybrid post-quantum key exchange groups conforming to NIST FIPS 203 (ML-KEM). The session resists retroactive decryption."
+                                    : "The scanner could not conclusively verify hybrid key exchange support on this target."}
+                              </p>
+
+                              {hndlRating && (
+                                <div className="pt-2 border-t border-subtle flex items-center justify-between text-[11px]">
+                                  <span className="text-quiet">
+                                    HNDL Risk Rating:{" "}
+                                    <strong className={hndlRating === "CRITICAL" || hndlRating === "HIGH" ? "text-red-400" : hndlRating === "LOW" ? "text-emerald-400" : "text-foreground"}>
+                                      {hndlRating}
+                                    </strong>
+                                  </span>
+                                  <span className="text-quiet font-mono">
+                                    NIST Standard: FIPS 203 (ML-KEM)
+                                  </span>
+                                </div>
+                              )}
+
+                              {hndlText && (
+                                <p className="text-[11px] text-quiet italic">
+                                  {hndlText}
+                                </p>
+                              )}
                             </div>
-                          )}
-
-                          {activeScan.result.hndl_rationale && (
-                            <p className="text-[11px] text-quiet italic">
-                              {activeScan.result.hndl_rationale}
-                            </p>
-                          )}
-                        </div>
+                          );
+                        })()}
 
                         {/* Certificate Evidence Card */}
                         {activeScan.result.certificate && (

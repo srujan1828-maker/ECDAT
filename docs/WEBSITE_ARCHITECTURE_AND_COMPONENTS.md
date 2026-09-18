@@ -252,10 +252,13 @@ interface FeatureScanHistoryProps {
    - Summary statistics: Total Findings, Quantum Vulnerable Primitives Count, Risk Level.
 3. **Dedicated Surface-Specific Inspectors**:
    - Clicking a scan opens a slide-over or expandable drawer with inspection tailored to that surface:
-     - **Network**: Negotiated TLS version, accepted cipher suites list, certificate expiry, ALPN protocols.
-     - **Code**: Detected source files, AST AST/regex finding line numbers, vulnerable function calls (`EVP_rc4`, `MD5_Init`).
-     - **Binary**: Architecture (x86_64, ARM), binary format (ELF/PE), imported crypto symbols, section entropy scores.
-     - **PCAP**: Client/Server IP pairs, packet count, TLS handshake stages, and **JA3/JA4 TLS Fingerprint blocks** with a 1-click clipboard copy button.
+      - **Network**: Negotiated TLS version, accepted cipher suites list, certificate expiry, ALPN protocols, human-readable Key Exchange primitive (e.g., `ECDHE (Classical)`, `Static RSA`, `Hybrid PQC`), and the **Post-Quantum Threat Assessment Card**:
+        - **Post-Quantum Ready (Emerald)**: Displayed when hybrid key exchange (FIPS 203 ML-KEM) is successfully negotiated; session resists retroactive decryption.
+        - **Post-Quantum Threat: Vulnerable to Harvest-Now-Decrypt-Later (Red)**: Displayed when the target relies on classical key exchange (ECDHE, DHE, RSA) under TLS 1.2 or TLS 1.3 without PQC. Explicitly marks HNDL Risk Rating as `HIGH` (or `CRITICAL` for broken ciphers like RC4/DES or static RSA lacking forward secrecy) and explains Shor's algorithm risk.
+        - **Inconclusive (Amber)**: Displayed only when ML-KEM probe capability is unmeasured or scanner runtime is unavailable.
+      - **Code**: Detected source files, AST/regex finding line numbers, vulnerable function calls (`EVP_rc4`, `MD5_Init`).
+      - **Binary**: Architecture (x86_64, ARM), binary format (ELF/PE), imported crypto symbols, section entropy scores.
+      - **PCAP**: Client/Server IP pairs, packet count, TLS handshake stages, and **JA3/JA4 TLS Fingerprint blocks** with a 1-click clipboard copy button.
 4. **Export Action**:
    - Allows instant JSON export of the specific scan record for external reporting.
 
