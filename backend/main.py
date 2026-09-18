@@ -1201,7 +1201,10 @@ def classify_binary_ml(req: BinaryMLRequest):
 
 @router.api_route('/demo/sih-flow', methods=['GET', 'POST'])
 def run_sih_demo():
-    return SihDemoRunner.run_full_flow().model_dump()
+    try:
+        return SihDemoRunner.run_full_flow().model_dump()
+    except Exception as exc:
+        raise HTTPException(500, detail=f"SIH demo execution failed: {str(exc)}")
 
 
 
