@@ -227,6 +227,85 @@ export type ApplyPatchResponse = {
   weakness_eliminated: boolean;
 };
 
+export type PatchedFileResult = {
+  path: string;
+  language: string;
+  original_code: string;
+  patched_code: string;
+  unified_diff: string;
+  pattern_id: string;
+  transformation: string;
+  verification_status: string;
+  test_output?: string;
+  findings_before: number;
+  findings_after: number;
+  weakness_eliminated: boolean;
+};
+
+export type CodebasePatchResponse = {
+  summary: {
+    total_files_scanned: number;
+    vulnerable_files_count: number;
+    clean_files_count: number;
+    vulnerabilities_found: number;
+    vulnerabilities_remediated: number;
+    remaining_vulnerabilities: number;
+    remediation_rate_percent: number;
+    languages_detected: string[];
+    all_verified: boolean;
+  };
+  patched_files: PatchedFileResult[];
+  clean_file_paths: string[];
+};
+
+export type OverviewStats = {
+  system_name: string;
+  environment: string;
+  posture_status: string;
+  subtitle: string;
+  metrics: {
+    crypto_assets: number;
+    crypto_assets_sub: string;
+    quantum_relevant: number;
+    quantum_relevant_sub: string;
+    hndl_exposure: number;
+    hndl_exposure_sub: string;
+    hybrid_pqc_capable: number;
+    hybrid_pqc_capable_sub: string;
+    completed_scans: number;
+    completed_scans_sub: string;
+  };
+  risk_distribution: {
+    total_assets: number;
+    critical_shor: number;
+    safe_grover_pqc: number;
+    legacy_insecure: number;
+  };
+  algorithm_family_distribution: {
+    name: string;
+    count: number;
+    percentage: number;
+    color: string;
+  }[];
+  multi_surface_coverage: {
+    name: string;
+    status: string;
+    variant: string;
+  }[];
+  action_queue: {
+    level: string;
+    title: string;
+    detail: string;
+    rationale: string;
+  }[];
+  threat_timeline: {
+    algorithm: string;
+    years_remaining: number;
+    percent: number;
+    color: string;
+  }[];
+};
+
 export type CustomCryptoFinding = {
   file_path: string;
   line_number: number;

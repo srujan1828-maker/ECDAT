@@ -27,8 +27,9 @@ import { requestApi, Scan } from "@/lib/api";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/ecdat/theme-toggle";
 import { Overview } from "@/components/ecdat/overview";
+import { AutonomousLoopPanel } from "@/components/ecdat/autonomous-loop-panel";
 import { MigrationPlanner } from "@/components/ecdat/migration-planner";
-import { LayoutDashboard, Route, FlaskConical, Scale, FileCheck2, PlayCircle, Radio } from "lucide-react";
+import { LayoutDashboard, Route, FlaskConical, Scale, FileCheck2, PlayCircle, Radio, Zap, Sparkles, Command, Bot, Send, MessageSquare, Layers, Wrench, Shield, KeyRound, Network } from "lucide-react";
 import { VerificationPanel } from "@/components/ecdat/verification-panel";
 import { StandardsPanel } from "@/components/ecdat/standards-panel";
 import { ExperimentalHub } from "@/components/ecdat/experimental-hub";
@@ -156,7 +157,7 @@ const languageExtensions: Record<string, string> = {
 
 export default function Dashboard() {
   const [view, setView] = useState<
-    "overview" | "scans" | "history" | "migration" | "verification" | "standards" | "experimental" | "sih_demo" | "judge_demo"
+    "overview" | "autonomous_loop" | "scans" | "history" | "migration" | "verification" | "standards" | "experimental" | "sih_demo" | "judge_demo"
   >("overview");
   const [projectInput, setProjectInput] = useState("default");
   const [project, setProject] = useState("default");
@@ -179,10 +180,34 @@ export default function Dashboard() {
     "all",
   );
 
+  // Command Menu (⌘K) & AI Copilot State
+  const [cmdKOpen, setCmdKOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  const [copilotMessages, setCopilotMessages] = useState<Array<{ role: "assistant" | "user"; text: string }>>([
+    {
+      role: "assistant",
+      text: "ECDAT Cyber Defense Command Copilot online. How can I assist with your NIST FIPS 203/204/205 post-quantum migration, Mosca Z threat horizon, or automated AST patch execution?",
+    },
+  ]);
+  const [copilotInput, setCopilotInput] = useState("");
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdKOpen((open) => !open);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   useEffect(() => {
     function readHash() {
       const hash = window.location.hash.slice(1);
-      if (hash === "migration") setView("migration");
+      if (hash === "loop" || hash === "autonomous_loop" || hash === "custom-loop" || hash === "patch" || hash === "autopatch") {
+        setView("autonomous_loop");
+      } else if (hash === "migration") setView("migration");
       else if (hash === "verify" || hash === "verification") setView("verification");
       else if (hash === "standards") setView("standards");
       else if (hash === "experimental") setView("experimental");
@@ -423,114 +448,233 @@ export default function Dashboard() {
             v3
           </span>
         </div>
-        <nav aria-label="Workspace navigation" className="overflow-y-auto p-3 lg:flex-1">
-          <p className="nav-group-label">Overview</p>
-          <div className="mb-4 grid grid-cols-2 gap-1 lg:grid-cols-1">
-            <button
-              onClick={() => setView("overview")}
-              aria-current={view === "overview" ? "page" : undefined}
-              className={`flex items-center gap-3 rounded-md border px-3 py-3 text-xs font-semibold ${view === "overview" ? "border-subtle bg-surface-raised text-foreground" : "border-transparent text-quiet hover:bg-surface-raised"}`}
-            >
-              <LayoutDashboard size={16} />
-              Command center
-            </button>
-          </div>
-          <p className="nav-group-label">Discovery</p>
-          <div className="grid grid-cols-3 gap-1 lg:grid-cols-1 lg:gap-1.5">
-            {scanTypes.map(({ id, label, description, icon: Icon }) => (
+        <nav aria-label="Workspace navigation" className="overflow-y-auto p-3 lg:flex-1 space-y-4 text-xs">
+          {/* OVERVIEW */}
+          <div>
+            <p className="nav-group-label mb-1.5">Overview</p>
+            <div className="space-y-1">
               <button
-                key={id}
+                type="button"
+                onClick={() => setView("overview")}
+                aria-current={view === "overview" ? "page" : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2 font-semibold transition-all ${
+                  view === "overview"
+                    ? "border-cyan-500/30 bg-cyan-500/10 text-teal"
+                    : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                }`}
+              >
+                <LayoutDashboard size={15} />
+                <span>Executive Overview</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("autonomous_loop")}
+                aria-current={view === "autonomous_loop" ? "page" : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2 font-semibold transition-all ${
+                  view === "autonomous_loop"
+                    ? "border-cyan-500/40 bg-cyan-500/15 text-teal"
+                    : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                }`}
+              >
+                <Zap size={15} className="text-teal" />
+                <span>Autonomous Custom Loop</span>
+                <span className="ml-auto rounded bg-cyan-500/20 px-1.5 py-0.5 font-mono text-[9px] font-bold text-teal">
+                  4-STAGE
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* DISCOVER */}
+          <div>
+            <p className="nav-group-label mb-1.5">Discovery Studio</p>
+            <div className="space-y-1">
+              {scanTypes.map(({ id, label, description, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    setMode(id);
+                    setView("scans");
+                  }}
+                  aria-current={
+                    view === "scans" && mode === id ? "page" : undefined
+                  }
+                  className={`group flex w-full items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-all ${
+                    view === "scans" && mode === id
+                      ? "border-cyan-500/30 bg-cyan-500/10 text-teal"
+                      : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                  }`}
+                >
+                  <Icon size={15} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  {view === "scans" && mode === id && (
+                    <ChevronRight size={13} className="shrink-0" />
+                  )}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setView("history")}
+                className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2 font-medium transition-all ${
+                  view === "history"
+                    ? "border-cyan-500/30 bg-cyan-500/10 text-teal"
+                    : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                }`}
+              >
+                <History size={15} />
+                <span>Scan Jobs &amp; History</span>
+                <span className="ml-auto rounded bg-surface-raised px-1.5 py-0.2 font-mono text-[10px]">
+                  {scans.length}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* INVENTORY & GRAPH */}
+          <div>
+            <p className="nav-group-label mb-1.5">Inventory &amp; Topology</p>
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => setView("overview")}
+                className="flex w-full items-center gap-2.5 rounded-md border border-transparent px-3 py-2 text-quiet hover:bg-surface-raised hover:text-foreground transition-all"
+              >
+                <Layers size={15} />
+                <span>Asset Inventory (CBOM)</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => {
-                  setMode(id);
+                  setMode("code");
                   setView("scans");
                 }}
-                aria-current={
-                  view === "scans" && mode === id ? "page" : undefined
-                }
-                className={`group flex min-w-0 items-center justify-center gap-2 rounded-md border px-2 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-cyan-400 lg:justify-start lg:px-3 ${view === "scans" && mode === id ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
+                className="flex w-full items-center gap-2.5 rounded-md border border-transparent px-3 py-2 text-quiet hover:bg-surface-raised hover:text-foreground transition-all"
               >
-                <Icon size={16} className="hidden shrink-0 min-[400px]:block" />
-                <span className="min-w-0">
-                  <span className="block text-xs font-semibold">{label}</span>
-                  <span className="mt-1 hidden text-[10px] text-quiet lg:block">
-                    {description}
-                  </span>
-                </span>
-                {view === "scans" && mode === id && (
-                  <ChevronRight
-                    size={13}
-                    className="ml-auto hidden shrink-0 lg:block"
-                  />
-                )}
+                <FileCode2 size={15} />
+                <span>Evidence Explorer</span>
               </button>
-            ))}
+              <button
+                type="button"
+                onClick={() => setView("experimental")}
+                aria-current={view === "experimental" ? "page" : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2 font-medium transition-all ${
+                  view === "experimental"
+                    ? "border-cyan-500/30 bg-cyan-500/10 text-teal"
+                    : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                }`}
+              >
+                <Network size={15} />
+                <span>Crypto Graph (GQL)</span>
+              </button>
+            </div>
           </div>
-          <p className="nav-group-label nav-group-action">Action & Verification</p>
-          <button
-            onClick={() => setView("migration")}
-            aria-current={view === "migration" ? "page" : undefined}
-            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "migration" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
-          >
-            <Route size={16} />
-            Migration planner
-          </button>
-          <button
-            onClick={() => setView("verification")}
-            aria-current={view === "verification" ? "page" : undefined}
-            className={`mt-1.5 flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "verification" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
-          >
-            <FileCheck2 size={16} />
-            Verification engine
-          </button>
-          <p className="nav-group-label nav-group-action">Compliance</p>
-          <button
-            onClick={() => setView("standards")}
-            aria-current={view === "standards" ? "page" : undefined}
-            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "standards" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
-          >
-            <Scale size={16} />
-            Standards & mandates
-          </button>
-          <p className="nav-group-label nav-group-action">Innovations</p>
-          <button
-            onClick={() => setView("experimental")}
-            aria-current={view === "experimental" ? "page" : undefined}
-            className={`flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs font-semibold ${view === "experimental" ? "border-cyan-500/20 bg-cyan-500/10 text-teal" : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"}`}
-          >
-            <FlaskConical size={16} />
-            Experimental hub
-          </button>
-          <button
-            onClick={() => setView("sih_demo")}
-            aria-current={view === "sih_demo" ? "page" : undefined}
-            className={`mt-1.5 flex w-full items-center gap-3 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2.5 text-left text-xs font-semibold text-teal hover:bg-cyan-500/20`}
-          >
-            <PlayCircle size={16} className="text-teal" />
-            SIH 10-step demo
-          </button>
-          <button
-            onClick={() => setView("judge_demo")}
-            aria-current={view === "judge_demo" ? "page" : undefined}
-            className={`mt-1.5 flex w-full items-center gap-2.5 rounded-md border border-emerald-500/40 bg-emerald-500/15 px-3 py-2.5 text-left text-xs font-semibold text-emerald-300 hover:bg-emerald-500/25 shadow-sm transition-all`}
-          >
-            <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
-            <span>Live Website Patch Demo</span>
-            <span className="ml-auto rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[9px] text-emerald-300 uppercase">
-              Judge
-            </span>
-          </button>
-          <p className="nav-group-label nav-group-action">Reports</p>
-          <button
-            onClick={() => setView("history")}
-            aria-current={view === "history" ? "page" : undefined}
-            className={`mt-1.5 hidden w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs font-medium lg:flex ${view === "history" ? "bg-cyan-500/10 text-teal" : "text-quiet hover:bg-surface-raised hover:text-foreground"}`}
-          >
-            <History size={16} />
-            History & reports
-            <span className="ml-auto rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[10px]">
-              {scans.length}
-            </span>
-          </button>
+
+          {/* ASSESS & ESTIMATE */}
+          <div>
+            <p className="nav-group-label mb-1.5">Assess &amp; Estimate</p>
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => setView("standards")}
+                aria-current={view === "standards" ? "page" : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2 font-medium transition-all ${
+                  view === "standards"
+                    ? "border-cyan-500/30 bg-cyan-500/10 text-teal"
+                    : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                }`}
+              >
+                <Scale size={15} />
+                <span>Quantum Risk (Mosca Z)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("migration")}
+                aria-current={view === "migration" ? "page" : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2 font-medium transition-all ${
+                  view === "migration"
+                    ? "border-cyan-500/30 bg-cyan-500/10 text-teal"
+                    : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                }`}
+              >
+                <Route size={15} />
+                <span>Migration Planner</span>
+              </button>
+            </div>
+          </div>
+
+          {/* MIGRATE & REMEDIATE */}
+          <div>
+            <p className="nav-group-label mb-1.5">Migrate &amp; Remediate</p>
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => setView("autonomous_loop")}
+                aria-current={view === "autonomous_loop" ? "page" : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2 font-semibold transition-all ${
+                  view === "autonomous_loop"
+                    ? "border-cyan-500/40 bg-cyan-500/15 text-teal"
+                    : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                }`}
+              >
+                <Wrench size={15} className="text-teal" />
+                <span>Auto Patch Engine</span>
+                <span className="ml-auto rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[9px] font-bold text-emerald-300">
+                  FULL-ZIP
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("verification")}
+                aria-current={view === "verification" ? "page" : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2 font-medium transition-all ${
+                  view === "verification"
+                    ? "border-cyan-500/30 bg-cyan-500/10 text-teal"
+                    : "border-transparent text-quiet hover:bg-surface-raised hover:text-foreground"
+                }`}
+              >
+                <FileCheck2 size={15} />
+                <span>Closed-Loop Verify</span>
+              </button>
+            </div>
+          </div>
+
+          {/* DEMOS & PRESENTATION */}
+          <div>
+            <p className="nav-group-label mb-1.5">Live Demos &amp; Output</p>
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => setView("judge_demo")}
+                aria-current={view === "judge_demo" ? "page" : undefined}
+                className="flex w-full items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-left font-semibold text-emerald-300 hover:bg-emerald-500/25 shadow-xs transition-all"
+              >
+                <ShieldCheck size={15} className="text-emerald-400 shrink-0" />
+                <span className="truncate">Live Judge Website Demo</span>
+                <span className="ml-auto rounded bg-emerald-500/25 px-1.5 py-0.5 font-mono text-[9px] text-emerald-300 uppercase">
+                  Judge
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("sih_demo")}
+                aria-current={view === "sih_demo" ? "page" : undefined}
+                className="flex w-full items-center gap-2.5 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-left font-semibold text-teal hover:bg-cyan-500/20 transition-all"
+              >
+                <PlayCircle size={15} className="text-teal shrink-0" />
+                <span>SIH 10-step Demo</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("history")}
+                aria-current={view === "history" ? "page" : undefined}
+                className="flex w-full items-center gap-2.5 rounded-md border border-transparent px-3 py-2 text-quiet hover:bg-surface-raised hover:text-foreground transition-all"
+              >
+                <Download size={15} />
+                <span>Export CBOM &amp; Reports</span>
+              </button>
+            </div>
+          </div>
         </nav>
         <div className="border-t border-subtle p-4">
           <details className="group" open>
@@ -605,28 +749,47 @@ export default function Dashboard() {
 
       <main className="min-w-0 flex-1">
         <header className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-subtle bg-surface/40 px-5 py-3 lg:px-7">
+          {/* Top Breadcrumb matching Screenshots 2, 3, 4, 5 */}
           <div className="flex min-w-0 items-center gap-2 text-xs">
-            <span className="text-quiet">Workspace</span>
+            <span className="font-bold text-foreground tracking-tight">ECDAT</span>
             <ChevronRight size={12} className="text-quiet" />
-            <span className="font-semibold">
-              {view === "overview"
-                ? "Command center"
-                : view === "migration"
-                  ? "Migration planner"
-                  : view === "verification"
-                    ? "Closed-loop verification"
-                    : view === "standards"
-                      ? "Standards & regulatory mapping"
-                      : view === "experimental"
-                        ? "Experimental extensions (A–G)"
-                        : view === "sih_demo"
-                          ? "SIH 10-step interactive demo"
-                          : view === "history"
-                            ? "History & reports"
-                            : activeType.label}
+            <span className="text-quiet font-medium">Cyber Defense Command</span>
+            <ChevronRight size={12} className="text-quiet" />
+            <span className="font-semibold text-foreground">Default Enterprise System</span>
+            <span className="rounded border border-red-500/30 bg-red-500/15 px-2 py-0.5 font-mono text-[9px] font-bold text-red-400 uppercase tracking-wider">
+              PRODUCTION
             </span>
           </div>
-          <div className="flex items-center gap-3">
+
+          <div className="flex items-center gap-2.5">
+            {/* Quick Actions Search (⌘K) */}
+            <button
+              type="button"
+              onClick={() => setCmdKOpen(true)}
+              className="flex items-center gap-1.5 rounded-md border border-subtle bg-surface px-2.5 py-1 text-xs text-quiet hover:bg-surface-raised hover:text-foreground transition-all cursor-pointer"
+              title="Open Command Palette (⌘K / Ctrl+K)"
+            >
+              <Command size={12} />
+              <span className="hidden sm:inline">Quick Action</span>
+              <kbd className="rounded border border-subtle bg-canvas px-1.5 py-0.2 font-mono text-[10px] text-quiet">
+                ⌘K
+              </kbd>
+            </button>
+
+            {/* AI Copilot Button */}
+            <button
+              type="button"
+              onClick={() => setCopilotOpen((open) => !open)}
+              className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${
+                copilotOpen
+                  ? "border-cyan-500/40 bg-cyan-500/15 text-teal shadow-xs"
+                  : "border-cyan-500/25 bg-cyan-500/10 text-teal hover:bg-cyan-500/20"
+              }`}
+            >
+              <Sparkles size={12} />
+              <span>AI Copilot</span>
+            </button>
+
             <ThemeToggle />
             <span className="hidden rounded border border-subtle px-2 py-1 font-mono text-[10px] text-quiet sm:block">
               CycloneDX 1.6
@@ -662,7 +825,6 @@ export default function Dashboard() {
                   ) {
                     setMode(targetScan.kind);
                   }
-
                 }
                 setSelected(id);
                 setView("scans");
@@ -672,7 +834,12 @@ export default function Dashboard() {
               onStandards={() => setView("standards")}
               onExperimental={() => setView("experimental")}
               onSihDemo={() => setView("sih_demo")}
+              onAutonomousLoop={() => setView("autonomous_loop")}
+              onLiveDemo={() => setView("judge_demo")}
             />
+          )}
+          {view === "autonomous_loop" && (
+            <AutonomousLoopPanel project={project} token={token} />
           )}
           {view === "migration" && (
             <MigrationPlanner
@@ -1121,6 +1288,12 @@ export default function Dashboard() {
                 }}
                 onDownloadSingleCbom={(scan) => void downloadSingle(scan)}
                 onRefresh={() => void refresh()}
+                onPatchAll={() => {
+                  setView("autonomous_loop");
+                }}
+                onViewGraph={() => {
+                  setView("experimental");
+                }}
               />
             </>
           )}
@@ -1484,6 +1657,281 @@ export default function Dashboard() {
             <span>Saved scans · Measured evidence · CycloneDX reports</span>
           </footer>
         </div>
+
+        {/* ─── Command Palette (⌘K) Modal ─── */}
+        {cmdKOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[12vh] backdrop-blur-xs animate-in fade-in duration-150"
+            onClick={() => setCmdKOpen(false)}
+          >
+            <div
+              className="w-full max-w-xl rounded-xl border border-subtle bg-surface shadow-2xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 border-b border-subtle px-4 py-3">
+                <Search size={16} className="text-teal shrink-0" />
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Type a command or jump to workspace..."
+                  className="w-full bg-transparent text-sm text-foreground placeholder:text-quiet outline-none"
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setCmdKOpen(false);
+                  }}
+                />
+                <kbd className="rounded border border-subtle bg-canvas px-1.5 py-0.5 font-mono text-[10px] text-quiet">
+                  ESC
+                </kbd>
+              </div>
+
+              <div className="max-h-80 overflow-y-auto p-2 space-y-1 text-xs">
+                <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-quiet">
+                  Navigation &amp; Core Engines
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("autonomous_loop");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-surface-raised hover:text-foreground text-quiet transition-colors"
+                >
+                  <Zap size={14} className="text-teal" />
+                  <span className="font-medium text-foreground">Autonomous Custom Loop &amp; Full Codebase Patcher</span>
+                  <span className="ml-auto rounded bg-cyan-500/20 px-1.5 py-0.5 font-mono text-[9px] text-teal">
+                    4-STAGE
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("overview");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-surface-raised hover:text-foreground text-quiet transition-colors"
+                >
+                  <LayoutDashboard size={14} className="text-teal" />
+                  <span className="font-medium text-foreground">Executive Overview Command Center</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("judge_demo");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-emerald-500/10 hover:text-emerald-300 text-emerald-400 transition-colors"
+                >
+                  <ShieldCheck size={14} />
+                  <span className="font-medium text-emerald-300">Live Website Vulnerability &amp; Patch Demo</span>
+                  <span className="ml-auto rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[9px] text-emerald-300 uppercase">
+                    Judge
+                  </span>
+                </button>
+
+                <div className="px-2 pt-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-quiet">
+                  Discovery Workspaces
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("code");
+                    setView("scans");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-surface-raised hover:text-foreground text-quiet transition-colors"
+                >
+                  <Code2 size={14} className="text-teal" />
+                  <span>Source Code Cryptographic Scanner</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("network");
+                    setView("scans");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-surface-raised hover:text-foreground text-quiet transition-colors"
+                >
+                  <Globe size={14} className="text-teal" />
+                  <span>Live Network &amp; Post-Quantum TLS 1.3 Scanner</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("binary");
+                    setView("scans");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-surface-raised hover:text-foreground text-quiet transition-colors"
+                >
+                  <Binary size={14} className="text-teal" />
+                  <span>Binary &amp; Firmware Reverse Engineering</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("pcap");
+                    setView("scans");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-surface-raised hover:text-foreground text-quiet transition-colors"
+                >
+                  <Radio size={14} className="text-teal" />
+                  <span>Passive PCAP &amp; FIPS 203 ML-KEM Dissection</span>
+                </button>
+
+                <div className="px-2 pt-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-quiet">
+                  Assessment &amp; Compliance
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("migration");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-surface-raised hover:text-foreground text-quiet transition-colors"
+                >
+                  <Route size={14} className="text-teal" />
+                  <span>NIST Post-Quantum Migration Planner</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("standards");
+                    setCmdKOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-surface-raised hover:text-foreground text-quiet transition-colors"
+                >
+                  <Scale size={14} className="text-teal" />
+                  <span>Regulatory Standards &amp; Mandates (NIST / CNSA 2.0)</span>
+                </button>
+              </div>
+
+              <div className="border-t border-subtle bg-canvas/40 px-4 py-2 text-[10px] text-quiet flex items-center justify-between">
+                <span>Press <kbd className="font-mono">ESC</kbd> to exit</span>
+                <span>ECDAT Cyber Defense Command</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── AI Copilot Slide-Over Drawer ─── */}
+        {copilotOpen && (
+          <div className="fixed inset-y-0 right-0 z-50 w-full sm:w-96 border-l border-subtle bg-surface shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between border-b border-subtle px-4 py-3.5 bg-canvas/50">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-cyan-500/10 border border-cyan-500/30 text-teal">
+                  <Sparkles size={15} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-foreground">ECDAT AI Copilot</h3>
+                  <p className="text-[10px] text-quiet">Quantum Migration &amp; AST Remediation</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCopilotOpen(false)}
+                className="rounded p-1 text-quiet hover:bg-surface-raised hover:text-foreground cursor-pointer"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
+              {copilotMessages.map((msg, idx) => (
+                <div
+                  key={idx}
+                  className={`rounded-lg p-3 ${
+                    msg.role === "assistant"
+                      ? "border border-cyan-500/20 bg-cyan-500/5 text-foreground leading-relaxed"
+                      : "bg-surface-raised text-foreground ml-6"
+                  }`}
+                >
+                  {msg.text}
+                </div>
+              ))}
+            </div>
+
+            {/* Quick Prompt Suggestions */}
+            <div className="p-3 border-t border-subtle/60 bg-canvas/30 space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-quiet">Quick Prompts</p>
+              <div className="flex flex-wrap gap-1.5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const reply = "To migrate RSA-1024 to NIST post-quantum standards, replace key exchange with FIPS 203 (ML-KEM-768). For digital signatures, transition to FIPS 204 (ML-DSA-65) or hybrid RSA-3072. The ECDAT Auto Patch Engine can automatically apply these replacements across your entire codebase.";
+                    setCopilotMessages(m => [...m, { role: "user", text: "How do I migrate RSA-1024 to ML-KEM?" }, { role: "assistant", text: reply }]);
+                  }}
+                  className="rounded border border-subtle bg-surface px-2 py-1 text-quiet hover:text-teal hover:border-cyan-500/30 text-[10px] cursor-pointer"
+                >
+                  Migrate RSA-1024 to ML-KEM
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const reply = "Mosca's Theorem states: If Shelf-life (X) + Migration Time (Y) > Years until CRQC (Z), your confidentiality is already compromised due to Harvest-Now-Decrypt-Later (HNDL). With CRQC estimated around 2030 (Z=6), organizations with 10+ year data retention must migrate immediately.";
+                    setCopilotMessages(m => [...m, { role: "user", text: "Explain Mosca's Z Theorem" }, { role: "assistant", text: reply }]);
+                  }}
+                  className="rounded border border-subtle bg-surface px-2 py-1 text-quiet hover:text-teal hover:border-cyan-500/30 text-[10px] cursor-pointer"
+                >
+                  Mosca Z Theorem
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("autonomous_loop");
+                    setCopilotOpen(false);
+                  }}
+                  className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-teal text-[10px] font-medium cursor-pointer"
+                >
+                  ⚡ Open Autonomous Loop
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3 border-t border-subtle bg-canvas/50">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!copilotInput.trim()) return;
+                  const userMsg = copilotInput.trim();
+                  setCopilotInput("");
+                  setCopilotMessages(m => [...m, { role: "user", text: userMsg }]);
+                  setTimeout(() => {
+                    setCopilotMessages(m => [
+                      ...m,
+                      {
+                        role: "assistant",
+                        text: `Analyzing: "${userMsg}". All cryptographic calls across Python, JavaScript, Java, C/C++, and Go can be patched autonomously using the ECDAT 4-Stage Loop. Use the "Auto Patch Engine" to upload your complete repository archive (.ZIP) and download the audited, post-quantum compliant source package.`,
+                      },
+                    ]);
+                  }, 400);
+                }}
+                className="flex items-center gap-2"
+              >
+                <input
+                  type="text"
+                  placeholder="Ask about PQC algorithms, Shor's risk, or patches..."
+                  className="flex-1 bg-surface border border-subtle rounded-md px-2.5 py-1.5 text-xs text-foreground placeholder:text-quiet outline-none focus:border-cyan-500"
+                  value={copilotInput}
+                  onChange={(e) => setCopilotInput(e.target.value)}
+                />
+                <button
+                  type="submit"
+                  className="rounded-md bg-cyan-500 hover:bg-cyan-400 p-2 text-slate-950 transition-colors cursor-pointer"
+                  title="Send message"
+                >
+                  <Send size={12} />
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

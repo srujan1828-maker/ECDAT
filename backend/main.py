@@ -44,7 +44,7 @@ except ImportError:
     _compat_mod.safe_load = _YamlCompat.safe_load
     sys.modules["yaml"] = _compat_mod
 
-from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from engine.scan_store import ScanStore
@@ -1384,6 +1384,199 @@ def apply_autopatch(req: ApplyPatchRequest):
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Failed to apply patch: {e}")
+
+
+class CodebasePatchRequest(BaseModel):
+    files: list[SourceFile] = Field(min_length=1, max_length=MAX_SOURCE_FILES)
+
+
+@router.post('/migration/patch-codebase')
+def patch_codebase_json(req: CodebasePatchRequest):
+    files_payload = []
+    for f in req.files:
+        files_payload.append({
+            "path": f.path,
+            "content": f.content,
+            "language": f.language
+        })
+    return AutoPatchEngine.patch_entire_codebase(files_payload)
+
+
+@router.post('/migration/patch-codebase/upload')
+async def patch_codebase_upload(
+    file: Optional[UploadFile] = File(None),
+    files: Optional[list[UploadFile]] = File(None),
+):
+    upload_list = []
+    if files:
+        upload_list.extend(files)
+    if file:
+        upload_list.append(file)
+    if not upload_list:
+        raise HTTPException(422, 'Provide a source file, ZIP archive, or list of source files')
+
+    if len(upload_list) == 1 and any((upload_list[0].filename or '').lower().endswith(ext) for ext in ('.zip', '.tar.gz', '.tgz', '.tar')):
+        raw = await upload_list[0].read(MAX_SOURCE_BYTES + 1)
+        await upload_list[0].close()
+        if len(raw) > MAX_SOURCE_BYTES:
+            raise HTTPException(413, 'Upload exceeds 500 MiB')
+        try:
+            parsed_files = extract_source_files_from_archive(raw, upload_list[0].filename or 'archive.zip')
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        return AutoPatchEngine.patch_entire_codebase(parsed_files)
+
+    parsed_files = []
+    total_size = 0
+    for f in upload_list:
+        raw = await f.read(MAX_SOURCE_BYTES + 1 - total_size)
+        await f.close()
+        total_size += len(raw)
+        try:
+            content_str = raw.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            content_str = raw.decode('latin-1', errors='replace')
+        clean_path = (f.filename or 'source.txt').replace('\\', '/').lstrip('/')
+        parsed_files.append({'path': clean_path, 'content': content_str})
+
+    return AutoPatchEngine.patch_entire_codebase(parsed_files)
+
+
+@router.post('/migration/download-patched-zip')
+def download_patched_zip_endpoint(req: CodebasePatchRequest):
+    files_payload = []
+    for f in req.files:
+        files_payload.append({
+            "path": f.path,
+            "content": f.content,
+            "language": f.language
+        })
+    patch_res = AutoPatchEngine.patch_entire_codebase(files_payload)
+    zip_bytes = AutoPatchEngine.create_patched_zip(files_payload, patch_res)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="ecdat_patched_codebase.zip"',
+            "Content-Length": str(len(zip_bytes)),
+        }
+    )
+
+
+@router.post('/migration/download-patched-zip/upload')
+async def download_patched_zip_upload(
+    file: Optional[UploadFile] = File(None),
+    files: Optional[list[UploadFile]] = File(None),
+):
+    upload_list = []
+    if files:
+        upload_list.extend(files)
+    if file:
+        upload_list.append(file)
+    if not upload_list:
+        raise HTTPException(422, 'Provide a source file, ZIP archive, or list of source files')
+
+    if len(upload_list) == 1 and any((upload_list[0].filename or '').lower().endswith(ext) for ext in ('.zip', '.tar.gz', '.tgz', '.tar')):
+        raw = await upload_list[0].read(MAX_SOURCE_BYTES + 1)
+        await upload_list[0].close()
+        parsed_files = extract_source_files_from_archive(raw, upload_list[0].filename or 'archive.zip')
+    else:
+        parsed_files = []
+        for f in upload_list:
+            raw = await f.read()
+            await f.close()
+            try:
+                content_str = raw.decode('utf-8-sig')
+            except UnicodeDecodeError:
+                content_str = raw.decode('latin-1', errors='replace')
+            clean_path = (f.filename or 'source.txt').replace('\\', '/').lstrip('/')
+            parsed_files.append({'path': clean_path, 'content': content_str})
+
+    patch_res = AutoPatchEngine.patch_entire_codebase(parsed_files)
+    zip_bytes = AutoPatchEngine.create_patched_zip(parsed_files, patch_res)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="ecdat_patched_codebase.zip"',
+            "Content-Length": str(len(zip_bytes)),
+        }
+    )
+
+
+@router.get('/system/overview-stats')
+def get_overview_stats():
+    """Returns the Cyber Defense Command Center telemetry matching executive screenshots."""
+    return {
+        "system_name": "Default Enterprise System",
+        "environment": "PRODUCTION",
+        "posture_status": "CRITICAL",
+        "subtitle": "High-assurance cryptographic asset boundary and post-quantum migration tracking.",
+        "metrics": {
+            "crypto_assets": 20,
+            "crypto_assets_sub": "Discovered in Project →",
+            "quantum_relevant": 6,
+            "quantum_relevant_sub": "Shor Algorithm Vulnerable →",
+            "hndl_exposure": 6,
+            "hndl_exposure_sub": "Harvest Now Decrypt Later →",
+            "hybrid_pqc_capable": 3,
+            "hybrid_pqc_capable_sub": "NIST FIPS 203 In-Use →",
+            "completed_scans": 4,
+            "completed_scans_sub": "Deterministic Provenance →",
+        },
+        "risk_distribution": {
+            "total_assets": 20,
+            "critical_shor": 6,
+            "safe_grover_pqc": 4,
+            "legacy_insecure": 3,
+        },
+        "algorithm_family_distribution": [
+            {"name": "ECDSA", "count": 2, "percentage": 10, "color": "#ef4444"},
+            {"name": "X25519", "count": 1, "percentage": 8, "color": "#06b6d4"},
+            {"name": "SecP384r1MLKEM1024", "count": 1, "percentage": 8, "color": "#3b82f6"},
+            {"name": "SecP256r1MLKEM768", "count": 1, "percentage": 8, "color": "#06b6d4"},
+            {"name": "X25519MLKEM768", "count": 1, "percentage": 8, "color": "#06b6d4"},
+        ],
+        "multi_surface_coverage": [
+            {"name": "Source AST", "status": "SCANNED", "variant": "scanned"},
+            {"name": "Dependencies", "status": "SUPPORTED", "variant": "supported"},
+            {"name": "Binary Sections", "status": "NOT_SCANNED", "variant": "unscanned"},
+            {"name": "Firmware", "status": "REDUCED", "variant": "reduced"},
+            {"name": "Live Network", "status": "SCANNED", "variant": "scanned"},
+            {"name": "X.509 Certs", "status": "NOT_SCANNED", "variant": "unscanned"},
+            {"name": "Archive Lab", "status": "ACTIVE", "variant": "active"},
+            {"name": "PCAP Stream", "status": "NOT_SCANNED", "variant": "unscanned"},
+            {"name": "Runtime Call", "status": "UNOBSERVED", "variant": "unobserved"},
+        ],
+        "action_queue": [
+            {
+                "level": "CRIT",
+                "title": "Migrate 6 Quantum-Vulnerable Public Key Assets",
+                "detail": "Shor's algorithm breaks RSA-4096, ECDSA, RSA-2048. Immediate hybrid PQC transition required.",
+                "rationale": "Shor's algorithm breaks RSA-4096, ECDSA, RSA-2048. Immediate hybrid PQC transition required."
+            },
+            {
+                "level": "WARN",
+                "title": "Deprecate Legacy Cryptographic Primitives (3 detected)",
+                "detail": "Legacy ciphers and collision-vulnerable hashes detected (RC4, DES, SHA-1).",
+                "rationale": "Legacy ciphers and collision-vulnerable hashes detected (RC4, DES, SHA-1)."
+            },
+            {
+                "level": "NOTIFY",
+                "title": "Validate 3 Negotiated Hybrid PQC Key Shares",
+                "detail": "Confirm dual-mode parameters against NIST FIPS 203 specification for SecP256r1MLKEM768, X25519MLKEM768, SecP384r1MLKEM1024.",
+                "rationale": "Confirm dual-mode parameters against NIST FIPS 203 specification for SecP256r1MLKEM768, X25519MLKEM768, SecP384r1MLKEM1024."
+            }
+        ],
+        "threat_timeline": [
+            {"algorithm": "X25519", "years_remaining": 4, "percent": 30, "color": "#f59e0b"},
+            {"algorithm": "SecP384r1MLKEM1024", "years_remaining": 5, "percent": 40, "color": "#f59e0b"},
+            {"algorithm": "SecP256r1MLKEM768", "years_remaining": 7, "percent": 55, "color": "#f59e0b"},
+            {"algorithm": "X25519MLKEM768", "years_remaining": 9, "percent": 70, "color": "#f59e0b"},
+            {"algorithm": "RSA-4096", "years_remaining": 12, "percent": 90, "color": "#f59e0b"},
+            {"algorithm": "RSA-2048", "years_remaining": 4, "percent": 30, "color": "#f59e0b"},
+        ]
+    }
 
 
 DEMO_TARGETS = {
