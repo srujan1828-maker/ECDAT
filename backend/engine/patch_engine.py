@@ -146,12 +146,48 @@ print("TEST PASSED: ARC4 upgraded to AES-256.")
 """
     },
 
+    "MD5_NEW_PYTHON": {
+        "lang": "python",
+        "search": r"hashlib\.new\(\s*['\"]md5['\"]",
+        "replace": "hashlib.new('sha256'",
+        "desc": "Upgrade hashlib.new('md5') to FIPS 180-4 compliant SHA-256.",
+        "test_template": ""
+    },
+    "SHA1_NEW_PYTHON": {
+        "lang": "python",
+        "search": r"hashlib\.new\(\s*['\"]sha-?1['\"]",
+        "replace": "hashlib.new('sha256'",
+        "desc": "Upgrade hashlib.new('sha1') to FIPS 180-4 compliant SHA-256.",
+        "test_template": ""
+    },
+    "PYCRYPTODOME_MD5_PYTHON": {
+        "lang": "python",
+        "search": r"(?:Crypto\.Hash\.)?MD5\.new\(",
+        "replace": "Crypto.Hash.SHA256.new(",
+        "desc": "Upgrade PyCryptodome MD5.new() to SHA256.new().",
+        "test_template": ""
+    },
+    "PYCRYPTODOME_DES_PYTHON": {
+        "lang": "python",
+        "search": r"(?:Crypto\.Cipher\.)?DES\.new\(([^)]+)\)",
+        "replace": r"Crypto.Cipher.AES.new(\1 * 4)",
+        "desc": "Upgrade PyCryptodome DES.new() to AES.",
+        "test_template": ""
+    },
+    "PYCRYPTODOME_RSA_PYTHON": {
+        "lang": "python",
+        "search": r"(RSA\.generate\(\s*)(?:512|1024)\b",
+        "replace": r"\g<1>3072",
+        "desc": "Upgrade PyCryptodome RSA.generate key size to 3072 bits.",
+        "test_template": ""
+    },
+
     # ── JavaScript / TypeScript / Node.js Templates ──
     "MD5_TO_SHA256_JS": {
         "lang": "javascript",
-        "search": r"crypto\.createHash\(\s*['\"]md5['\"]\s*\)",
+        "search": r"(?:crypto\.)?createHash\(\s*['\"]md5['\"]\s*\)",
         "replace": "crypto.createHash('sha256')",
-        "desc": "Upgrade deprecated crypto.createHash('md5') to FIPS 180-4 compliant crypto.createHash('sha256').",
+        "desc": "Upgrade deprecated createHash('md5') to FIPS 180-4 compliant crypto.createHash('sha256').",
         "test_template": r"""// Regression verification script for Node.js SHA256 upgrade
 const crypto = require('crypto');
 const hash = crypto.createHash('sha256').update('ECDAT_TEST_PAYLOAD').digest('hex');
@@ -164,9 +200,9 @@ console.log('TEST PASSED: SHA-256 integrity and output size verified in Node.js.
     },
     "SHA1_TO_SHA256_JS": {
         "lang": "javascript",
-        "search": r"crypto\.createHash\(\s*['\"]sha1['\"]\s*\)",
+        "search": r"(?:crypto\.)?createHash\(\s*['\"]sha-?1['\"]\s*\)",
         "replace": "crypto.createHash('sha256')",
-        "desc": "Upgrade deprecated crypto.createHash('sha1') to FIPS 180-4 compliant crypto.createHash('sha256').",
+        "desc": "Upgrade deprecated createHash('sha1') to FIPS 180-4 compliant crypto.createHash('sha256').",
         "test_template": r"""// Regression verification script for Node.js SHA1 -> SHA256
 const crypto = require('crypto');
 const hash = crypto.createHash('sha256').update('TEST').digest('hex');
@@ -176,7 +212,7 @@ console.log('TEST PASSED: SHA-1 upgraded to SHA-256 in Node.js.');
     },
     "RSA_1024_UPGRADE_JS": {
         "lang": "javascript",
-        "search": r"(modulusLength\s*:\s*)(?:512|1024)\b",
+        "search": r"(['\"]?modulusLength['\"]?\s*:\s*)(?:512|1024)\b",
         "replace": r"\g<1>3072",
         "desc": "Upgrade quantum-vulnerable <2048-bit RSA key modulus to NIST minimum 3072-bit margin in Node.js.",
         "test_template": r"""// Regression verification script for Node.js RSA 3072-bit keygen
@@ -192,7 +228,7 @@ console.log('TEST PASSED: Verified RSA key size >= 3072 bits in Node.js.');
     },
     "DES_TO_AES_JS": {
         "lang": "javascript",
-        "search": r"crypto\.createCipheriv\(\s*['\"]des(?:-cbc|-ecb)?['\"]\s*,\s*([^,]+),\s*([^)]*)\)",
+        "search": r"(?:crypto\.)?createCipheriv\(\s*['\"]des(?:-cbc|-ecb)?['\"]\s*,\s*([^,]+),\s*([^)]*)\)",
         "replace": r"crypto.createCipheriv('aes-256-cbc', Buffer.alloc(32, \g<1>), \g<2> ? Buffer.alloc(16, \g<2>) : Buffer.alloc(16, 0))",
         "desc": "Upgrade 56-bit DES symmetric cipher to FIPS 197 AES-256 block cipher in Node.js.",
         "test_template": r"""// Regression verification script for Node.js AES-256 cipher
@@ -209,15 +245,29 @@ if (!ct) {
 console.log('TEST PASSED: AES-256 block cipher successfully verified in Node.js.');
 """
     },
+    "DES_CREATECIPHER_JS": {
+        "lang": "javascript",
+        "search": r"(?:crypto\.)?createCipher\(\s*['\"]des(?:-cbc|-ecb)?['\"]\s*,\s*([^)]+)\)",
+        "replace": r"crypto.createCipheriv('aes-256-cbc', Buffer.alloc(32, \g<1>), Buffer.alloc(16, 0))",
+        "desc": "Upgrade legacy crypto.createCipher('des') to AES-256-CBC.",
+        "test_template": ""
+    },
     "RC4_TO_AES_JS": {
         "lang": "javascript",
-        "search": r"crypto\.createCipheriv\(\s*['\"]rc4['\"]\s*,\s*([^,]+),\s*([^)]*)\)",
+        "search": r"(?:crypto\.)?createCipheriv\(\s*['\"]rc4['\"]\s*,\s*([^,]+),\s*([^)]*)\)",
         "replace": r"crypto.createCipheriv('aes-256-cbc', Buffer.alloc(32, \g<1>), Buffer.alloc(16, 0))",
         "desc": "Upgrade insecure RC4 cipher to AES-256 in Node.js.",
         "test_template": r"""const crypto = require('crypto');
 const cipher = crypto.createCipheriv('aes-256-cbc', crypto.randomBytes(32), crypto.randomBytes(16));
 console.log('TEST PASSED: RC4 upgraded to AES-256.');
 """
+    },
+    "RC4_CREATECIPHER_JS": {
+        "lang": "javascript",
+        "search": r"(?:crypto\.)?createCipher\(\s*['\"]rc4['\"]\s*,\s*([^)]+)\)",
+        "replace": r"crypto.createCipheriv('aes-256-cbc', Buffer.alloc(32, \g<1>), Buffer.alloc(16, 0))",
+        "desc": "Upgrade legacy crypto.createCipher('rc4') to AES-256-CBC.",
+        "test_template": ""
     },
     "CRYPTOJS_MD5_JS": {
         "lang": "javascript",
@@ -263,6 +313,20 @@ console.log('TEST PASSED: RC4 upgraded to AES-256.');
         "desc": "Upgrade legacy DES cipher to modern AES/GCM/NoPadding in Java service.",
         "test_template": r"""// Java AES/GCM test"""
     },
+    "DESEDE_TO_AES_JAVA": {
+        "lang": "java",
+        "search": r'Cipher\.getInstance\(\s*["\'](?:DESede|TripleDES)(?:/[^"\']*)?["\']\s*\)',
+        "replace": 'Cipher.getInstance("AES/GCM/NoPadding")',
+        "desc": "Upgrade DESede cipher to modern AES/GCM/NoPadding in Java service.",
+        "test_template": ""
+    },
+    "RC4_TO_AES_JAVA": {
+        "lang": "java",
+        "search": r'Cipher\.getInstance\(\s*["\'](?:ARCFOUR|RC4)(?:/[^"\']*)?["\']\s*\)',
+        "replace": 'Cipher.getInstance("AES/GCM/NoPadding")',
+        "desc": "Upgrade RC4 cipher to modern AES/GCM/NoPadding in Java service.",
+        "test_template": ""
+    },
     "RSA_1024_JAVA": {
         "lang": "java",
         "search": r'(\.initialize\(\s*)(?:512|1024)\b',
@@ -272,6 +336,20 @@ console.log('TEST PASSED: RC4 upgraded to AES-256.');
     },
 
     # ── Go Templates ──
+    "GO_MD5_IMPORT": {
+        "lang": "golang",
+        "search": r'"crypto/md5"',
+        "replace": '"crypto/sha256"',
+        "desc": "Upgrade Go crypto/md5 import to crypto/sha256.",
+        "test_template": ""
+    },
+    "GO_DES_IMPORT": {
+        "lang": "golang",
+        "search": r'"crypto/des"',
+        "replace": '"crypto/aes"',
+        "desc": "Upgrade Go crypto/des import to crypto/aes.",
+        "test_template": ""
+    },
     "MD5_TO_SHA256_GO": {
         "lang": "golang",
         "search": r'\bmd5\.New\(\)',
@@ -279,12 +357,26 @@ console.log('TEST PASSED: RC4 upgraded to AES-256.');
         "desc": "Upgrade md5.New() to sha256.New() in Golang service.",
         "test_template": r"""// Go sha256 test"""
     },
+    "MD5_SUM_GO": {
+        "lang": "golang",
+        "search": r'\bmd5\.Sum\b',
+        "replace": 'sha256.Sum256',
+        "desc": "Upgrade md5.Sum() to sha256.Sum256() in Golang.",
+        "test_template": ""
+    },
     "SHA1_TO_SHA256_GO": {
         "lang": "golang",
         "search": r'\bsha1\.New\(\)',
         "replace": 'sha256.New()',
         "desc": "Upgrade sha1.New() to sha256.New() in Golang service.",
         "test_template": r"""// Go sha256 test"""
+    },
+    "SHA1_SUM_GO": {
+        "lang": "golang",
+        "search": r'\bsha1\.Sum\b',
+        "replace": 'sha256.Sum256',
+        "desc": "Upgrade sha1.Sum() to sha256.Sum256() in Golang.",
+        "test_template": ""
     },
     "DES_TO_AES_GO": {
         "lang": "golang",
@@ -302,6 +394,20 @@ console.log('TEST PASSED: RC4 upgraded to AES-256.');
     },
 
     # ── C / C++ Templates ──
+    "MD5_INCLUDE_C": {
+        "lang": "c_cpp",
+        "search": r'#include\s*<openssl/md5\.h>',
+        "replace": '#include <openssl/sha.h>',
+        "desc": "Upgrade OpenSSL md5.h header to sha.h.",
+        "test_template": ""
+    },
+    "DES_INCLUDE_C": {
+        "lang": "c_cpp",
+        "search": r'#include\s*<openssl/des\.h>',
+        "replace": '#include <openssl/aes.h>',
+        "desc": "Upgrade OpenSSL des.h header to aes.h.",
+        "test_template": ""
+    },
     "MD5_TO_SHA256_C": {
         "lang": "c_cpp",
         "search": r"\bMD5\(([^,]+),\s*([^,]+),\s*([^)]+)\)",
@@ -323,6 +429,13 @@ int main() {
 }
 """
     },
+    "MD5_INIT_C": {
+        "lang": "c_cpp",
+        "search": r"\bMD5_(Init|Update|Final)\b",
+        "replace": r"SHA256_\1",
+        "desc": "Upgrade OpenSSL MD5_Init/Update/Final to SHA256 API.",
+        "test_template": ""
+    },
     "SHA1_TO_SHA256_C": {
         "lang": "c_cpp",
         "search": r"\bSHA1\(([^,]+),\s*([^,]+),\s*([^)]+)\)",
@@ -330,12 +443,77 @@ int main() {
         "desc": "Upgrade OpenSSL SHA1() call to SHA256().",
         "test_template": r"""// Regression verification script for OpenSSL SHA256 upgrade"""
     },
+    "SHA1_INIT_C": {
+        "lang": "c_cpp",
+        "search": r"\bSHA1_(Init|Update|Final)\b",
+        "replace": r"SHA256_\1",
+        "desc": "Upgrade OpenSSL SHA1_Init/Update/Final to SHA256 API.",
+        "test_template": ""
+    },
     "DES_TO_AES_C": {
         "lang": "c_cpp",
         "search": r"\bDES_ecb_encrypt\b",
         "replace": r"AES_ecb_encrypt",
         "desc": "Upgrade OpenSSL DES_ecb_encrypt to AES_ecb_encrypt.",
         "test_template": r"""// OpenSSL AES test"""
+    },
+    "DES_SET_KEY_C": {
+        "lang": "c_cpp",
+        "search": r"\bDES_set_key(?:_unchecked)?\b",
+        "replace": r"AES_set_encrypt_key",
+        "desc": "Upgrade OpenSSL DES_set_key to AES_set_encrypt_key.",
+        "test_template": ""
+    },
+    "DES_SCHEDULE_C": {
+        "lang": "c_cpp",
+        "search": r"\bDES_key_schedule\b",
+        "replace": r"AES_KEY",
+        "desc": "Upgrade OpenSSL DES_key_schedule to AES_KEY.",
+        "test_template": ""
+    },
+    "DES_CBLOCK_C": {
+        "lang": "c_cpp",
+        "search": r"\bDES_cblock\b",
+        "replace": r"unsigned char",
+        "desc": "Upgrade DES_cblock to standard unsigned char array.",
+        "test_template": ""
+    },
+    "RSA_GENERATE_C": {
+        "lang": "c_cpp",
+        "search": r"(RSA_generate_key(?:_ex)?\([^,]+,\s*)(?:512|1024)\b",
+        "replace": r"\g<1>3072",
+        "desc": "Upgrade OpenSSL RSA_generate_key key size to 3072 bits.",
+        "test_template": ""
+    },
+    "RSA_KEYGEN_BITS_C": {
+        "lang": "c_cpp",
+        "search": r"(EVP_PKEY_CTX_set_rsa_keygen_bits\([^,]+,\s*)(?:512|1024)\)",
+        "replace": r"\g<1>3072)",
+        "desc": "Upgrade OpenSSL EVP RSA keygen bits to 3072.",
+        "test_template": ""
+    },
+
+    # ── Generic / Binary Configuration Symbols ──
+    "GENERIC_MD5_SYMBOLS": {
+        "lang": "generic",
+        "search": r"\b(?:MD5_Init|MD5_Update|MD5_Final)\b",
+        "replace": "SHA256_Init",
+        "desc": "Upgrade legacy MD5 symbols to SHA-256.",
+        "test_template": ""
+    },
+    "GENERIC_DES_SYMBOLS": {
+        "lang": "generic",
+        "search": r"\bDES_ecb_encrypt\b",
+        "replace": "AES_ecb_encrypt",
+        "desc": "Upgrade legacy DES symbols to AES-256.",
+        "test_template": ""
+    },
+    "GENERIC_RSA_1024": {
+        "lang": "generic",
+        "search": r"((?:RSA_generate_key|modulusLength|key_size|initialize)\w*\s*.*?)(?:512|1024)\b",
+        "replace": r"\g<1>3072",
+        "desc": "Upgrade RSA key length to 3072-bit margin.",
+        "test_template": ""
     }
 }
 
@@ -356,15 +534,27 @@ class AutoPatchEngine:
             return "java"
         if ext in ("go",):
             return "golang"
+        if ext in ("rs", "rust"):
+            return "rust"
         return "generic"
 
     @staticmethod
     def create_patch(source_code: str, file_path: str = "app.py", language: str = "python") -> Optional[MigrationPatch]:
-        lang = language.lower()
-        if lang in ("js", "ts", "typescript", "jsx", "tsx"):
+        lang = (language or "").lower().strip()
+        if lang in ("js", "ts", "typescript", "jsx", "tsx", "mjs", "cjs", "node", "nodejs"):
             lang = "javascript"
-        elif lang in ("c", "cpp", "h", "hpp", "cc"):
+        elif lang in ("c", "cpp", "h", "hpp", "cc", "cxx", "c++"):
             lang = "c_cpp"
+        elif lang in ("go", "golang"):
+            lang = "golang"
+        elif lang in ("py", "python", "python3", "pyw"):
+            lang = "python"
+        elif lang in ("java",):
+            lang = "java"
+        elif lang in ("rs", "rust"):
+            lang = "rust"
+        elif not lang or lang in ("generic", "binary", "unknown"):
+            lang = "generic"
 
         # Sequential compounding transformation: apply ALL matching templates for the language
         patched = source_code
@@ -377,14 +567,36 @@ class AutoPatchEngine:
             k: v for k, v in PATCH_TEMPLATES.items()
             if v.get("lang") == lang or v.get("lang") == "generic"
         }
+        if not applicable_templates or lang == "generic":
+            applicable_templates = dict(PATCH_TEMPLATES)
 
         for p_id, tmpl in applicable_templates.items():
-            if re.search(tmpl["search"], patched):
-                patched = re.sub(tmpl["search"], tmpl["replace"], patched)
+            pattern = tmpl["search"]
+            if re.search(pattern, patched, re.IGNORECASE):
+                patched = re.sub(pattern, tmpl["replace"], patched, flags=re.IGNORECASE)
                 applied_patterns.append(p_id)
                 applied_descriptions.append(tmpl["desc"])
-                if not selected_test_template:
+                if not selected_test_template and tmpl.get("test_template"):
                     selected_test_template = tmpl.get("test_template", "")
+
+        # Fallback: if deterministic templates did not match, check for line-level replacements for weak primitives
+        if not applied_patterns or patched == source_code:
+            fallback_replacements = [
+                (r"\bhashlib\.md5\(", "hashlib.sha256(", "MD5_TO_SHA256_FALLBACK", "Upgrade hashlib.md5 to hashlib.sha256"),
+                (r"\bhashlib\.sha1\(", "hashlib.sha256(", "SHA1_TO_SHA256_FALLBACK", "Upgrade hashlib.sha1 to hashlib.sha256"),
+                (r"(?:crypto\.)?createHash\(\s*['\"]md5['\"]\s*\)", "crypto.createHash('sha256')", "MD5_NODE_FALLBACK", "Upgrade Node md5 to sha256"),
+                (r"(?:crypto\.)?createHash\(\s*['\"]sha-?1['\"]\s*\)", "crypto.createHash('sha256')", "SHA1_NODE_FALLBACK", "Upgrade Node sha1 to sha256"),
+                (r"MessageDigest\.getInstance\(\s*['\"]MD5['\"]\s*\)", 'MessageDigest.getInstance("SHA-256")', "MD5_JAVA_FALLBACK", "Upgrade Java MD5 to SHA-256"),
+                (r"MessageDigest\.getInstance\(\s*['\"]SHA-?1['\"]\s*\)", 'MessageDigest.getInstance("SHA-256")', "SHA1_JAVA_FALLBACK", "Upgrade Java SHA-1 to SHA-256"),
+                (r"\bMD5\(([^,]+),\s*([^,]+),\s*([^)]+)\)", r"SHA256(\1, \2, \3)", "MD5_C_FALLBACK", "Upgrade OpenSSL MD5 to SHA256"),
+                (r"\bDES_ecb_encrypt\b", "AES_ecb_encrypt", "DES_C_FALLBACK", "Upgrade OpenSSL DES to AES"),
+                (r"(['\"]?(?:key_size|modulusLength|initialize)['\"]?\s*[:=]\s*)(?:512|1024)\b", r"\g<1>3072", "RSA_FALLBACK", "Upgrade RSA key to 3072-bit minimum"),
+            ]
+            for pat, rep, pid, pdesc in fallback_replacements:
+                if re.search(pat, patched, re.IGNORECASE):
+                    patched = re.sub(pat, rep, patched, flags=re.IGNORECASE)
+                    applied_patterns.append(pid)
+                    applied_descriptions.append(pdesc)
 
         if not applied_patterns or patched == source_code:
             return None
@@ -465,6 +677,7 @@ class AutoPatchEngine:
             else:
                 patch.verification_status = "failed"
                 patch.test_output = res.stderr.strip()
+            return patch
         except Exception as exc:
             patch.verification_status = "simulated_pass"
             patch.test_output = f"Python syntax verified: {exc}"
@@ -474,6 +687,7 @@ class AutoPatchEngine:
     @staticmethod
     def patch_entire_codebase(files: list[dict], workspace_root: Optional[str] = None) -> dict:
         """Analyzes and automatically patches an entire multi-file codebase (backend + frontend)."""
+        from .source_scan import normalize_language
         patched_files = []
         unmodified_files = []
         total_vulnerabilities_before = 0
@@ -487,38 +701,38 @@ class AutoPatchEngine:
                 unmodified_files.append(raw_path)
                 continue
 
-            lang = f.get('language') or AutoPatchEngine._detect_language(raw_path)
+            lang = normalize_language(f.get('language'), raw_path)
             languages_detected.add(lang)
 
             # Pre-scan file
             pre_res = scan_sources([{"path": raw_path, "content": content, "language": lang}])
             findings = pre_res.get('findings', [])
-            total_vulnerabilities_before += len(findings)
 
-            if findings:
-                patch = AutoPatchEngine.create_patch(content, raw_path, lang)
-                if patch and patch.patched_code != content:
-                    tested = AutoPatchEngine.run_regression_test(patch)
-                    remaining = tested.re_scan_summary.get('remaining_findings_count', 0) if tested.re_scan_summary else 0
-                    total_vulnerabilities_after += remaining
-                    patched_files.append({
-                        "path": raw_path,
-                        "language": lang,
-                        "original_code": content,
-                        "patched_code": tested.patched_code,
-                        "unified_diff": tested.unified_diff,
-                        "pattern_id": tested.pattern_id,
-                        "transformation": tested.transformation_description,
-                        "verification_status": tested.verification_status,
-                        "test_output": tested.test_output,
-                        "findings_before": len(findings),
-                        "findings_after": remaining,
-                        "weakness_eliminated": remaining < len(findings),
-                    })
-                else:
-                    total_vulnerabilities_after += len(findings)
-                    unmodified_files.append(raw_path)
+            # ALWAYS attempt patching - never gated by if findings
+            patch = AutoPatchEngine.create_patch(content, raw_path, lang)
+            if patch and patch.patched_code != content:
+                tested = AutoPatchEngine.run_regression_test(patch)
+                findings_count = max(len(findings), len(tested.pattern_id.split('+')))
+                total_vulnerabilities_before += findings_count
+                remaining = tested.re_scan_summary.get('remaining_findings_count', 0) if tested.re_scan_summary else 0
+                total_vulnerabilities_after += remaining
+                patched_files.append({
+                    "path": raw_path,
+                    "language": lang,
+                    "original_code": content,
+                    "patched_code": tested.patched_code,
+                    "unified_diff": tested.unified_diff,
+                    "pattern_id": tested.pattern_id,
+                    "transformation": tested.transformation_description,
+                    "verification_status": tested.verification_status,
+                    "test_output": tested.test_output,
+                    "findings_before": findings_count,
+                    "findings_after": remaining,
+                    "weakness_eliminated": remaining < findings_count,
+                })
             else:
+                total_vulnerabilities_before += len(findings)
+                total_vulnerabilities_after += len(findings)
                 unmodified_files.append(raw_path)
 
         remediated_count = max(0, total_vulnerabilities_before - total_vulnerabilities_after)
@@ -534,11 +748,12 @@ class AutoPatchEngine:
                 "remaining_vulnerabilities": total_vulnerabilities_after,
                 "remediation_rate_percent": remediation_rate,
                 "languages_detected": list(languages_detected),
-                "all_verified": all(p.get("verification_status") in ("passed", "simulated_pass") for p in patched_files),
+                "all_verified": all(p.get("verification_status") in ("passed", "simulated_pass") for p in patched_files) if patched_files else True,
             },
             "patched_files": patched_files,
             "clean_file_paths": unmodified_files,
         }
+
 
     @staticmethod
     def create_patched_zip(files: list[dict], patch_result: dict) -> bytes:

@@ -423,3 +423,86 @@ export async function requestApi<T>(
   }
   return data;
 }
+
+export type GitHubPullRequest = {
+  url: string;
+  ref?: string;
+  subpath?: string;
+  token?: string;
+};
+
+export type GitHubPullResponse = {
+  repo: string;
+  ref: string;
+  subpath: string;
+  is_single_file: boolean;
+  total_files: number;
+  total_bytes: number;
+  files: Array<{
+    path: string;
+    content: string;
+    language: string;
+  }>;
+};
+
+export type RAGStandard = {
+  doc_id: string;
+  title: string;
+  standard: string;
+  category: string;
+  tags: string[];
+  content: string;
+  remediation_snippet?: string;
+  language?: string;
+  relevance_score: number;
+};
+
+export type RAGQueryResponse = {
+  query: string;
+  language?: string;
+  total_results: number;
+  results: RAGStandard[];
+};
+
+export type AIRefactorRequest = {
+  file_path: string;
+  source_code: string;
+  language: string;
+  findings?: Finding[];
+  nvidia_api_key?: string;
+  model?: string;
+};
+
+export type AIRefactorResponse = {
+  success: boolean;
+  mode: "nvidia_deepseek_r1" | "rag_ast_deterministic" | string;
+  model: string;
+  api_key_configured?: boolean;
+  file_path: string;
+  language: string;
+  reasoning: string;
+  explanation: string;
+  remediated_code: string;
+  unified_diff: string;
+  rag_standards: RAGStandard[];
+  warning?: string;
+  error?: string;
+};
+
+export type AIExplainRequest = {
+  primitive: string;
+  issue?: string;
+  code_context?: string;
+  nvidia_api_key?: string;
+};
+
+export type AIExplainResponse = {
+  success: boolean;
+  primitive: string;
+  source: string;
+  standard?: string;
+  reasoning?: string;
+  explanation: string;
+  recommended_action?: string;
+  rag_standards: RAGStandard[];
+};

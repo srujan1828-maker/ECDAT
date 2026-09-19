@@ -21,8 +21,32 @@ import {
   Cpu,
   FileText,
   Info,
+  GitPullRequest,
+  Sparkles,
+  BookOpen,
+  Bot,
+  ChevronDown,
+  ChevronUp,
+  KeyRound,
+  ExternalLink,
 } from "lucide-react";
-import { requestApi, CodebasePatchResponse, PatchedFileResult } from "@/lib/api";
+import {
+  requestApi,
+  CodebasePatchResponse,
+  PatchedFileResult,
+  GitHubPullResponse,
+  RAGStandard,
+  AIRefactorResponse,
+} from "@/lib/api";
+
+function GithubIcon({ size = 14, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+      <path d="M9 18c-4.51 2-5-2-7-2" />
+    </svg>
+  );
+}
 
 const PRESET_SCENARIOS = [
   {
@@ -102,6 +126,22 @@ export function AutonomousLoopPanel({
   // Multi-file / Full codebase state
   const [codebaseFiles, setCodebaseFiles] = useState<Array<{ path: string; content: string }>>([]);
   const [uploadedZip, setUploadedZip] = useState<File | null>(null);
+
+  // GitHub pull state
+  const [codebaseInputType, setCodebaseInputType] = useState<"github" | "zip" | "folder">("github");
+  const [githubUrl, setGithubUrl] = useState("https://github.com/expressjs/express");
+  const [githubBranch, setGithubBranch] = useState("");
+  const [githubSubpath, setGithubSubpath] = useState("");
+  const [githubToken, setGithubToken] = useState("");
+  const [isPullingGithub, setIsPullingGithub] = useState(false);
+
+  // NVIDIA DeepSeek-R1 AI state
+  const [enableDeepSeek, setEnableDeepSeek] = useState(false);
+  const [nvidiaApiKey, setNvidiaApiKey] = useState("");
+  const [isAiRefactoring, setIsAiRefactoring] = useState(false);
+  const [aiResult, setAiResult] = useState<AIRefactorResponse | null>(null);
+  const [showReasoning, setShowReasoning] = useState(true);
+  const [selectedRagDoc, setSelectedRagDoc] = useState<RAGStandard | null>(null);
   
   // Pipeline execution state
   const [isExecuting, setIsExecuting] = useState(false);
@@ -114,6 +154,68 @@ export function AutonomousLoopPanel({
     setSelectedScenario(sc);
     setSourceCode(sc.code);
     setPatchResult(null);
+    setAiResult(null);
+  }
+
+  // Pull repository directly from GitHub
+  async function handlePullGithub() {
+    const cleanUrl = githubUrl.trim();
+    if (!cleanUrl) {
+      setStatusMessage("Please enter a GitHub repository URL (e.g. https://github.com/owner/repo or owner/repo)");
+      return;
+    }
+
+    setIsPullingGithub(true);
+    setStatusMessage(`Connecting to GitHub and pulling '${cleanUrl}'...`);
+    try {
+      const res = await requestApi<GitHubPullResponse>("/github/pull", project, token, {
+        url: cleanUrl,
+        ref: githubBranch.trim() || undefined,
+        subpath: githubSubpath.trim() || undefined,
+        token: githubToken.trim() || undefined,
+      });
+
+      setCodebaseFiles(res.files);
+      setUploadedZip(null);
+      setMode("codebase");
+      setStatusMessage(
+        `Imported ${res.total_files} source files from GitHub repo '${res.repo}' (${(res.total_bytes / 1024).toFixed(1)} KB). Ready for post-quantum auto-patching.`
+      );
+    } catch (err) {
+      setStatusMessage(`GitHub pull error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsPullingGithub(false);
+    }
+  }
+
+  // Run NVIDIA DeepSeek-R1 AI Refactoring (RAG-Augmented)
+  async function runDeepSeekRefactor(targetCodeToUse?: string, targetPathToUse?: string) {
+    setIsAiRefactoring(true);
+    setStatusMessage("Querying PQC RAG standards and invoking NVIDIA DeepSeek-R1 reasoning...");
+    try {
+      const curPath = targetPathToUse || (mode === "codebase" && codebaseFiles[0] ? codebaseFiles[0].path : selectedScenario.filename);
+      const curCode = targetCodeToUse || (mode === "codebase" && codebaseFiles[0] ? codebaseFiles[0].content : sourceCode);
+      const curLang = selectedScenario.lang.toLowerCase();
+
+      const res = await requestApi<AIRefactorResponse>("/ai/refactor", project, token, {
+        file_path: curPath,
+        source_code: curCode,
+        language: curLang,
+        nvidia_api_key: nvidiaApiKey.trim() || undefined,
+      });
+
+      setAiResult(res);
+      if (res.remediated_code && mode === "snippet") {
+        setSourceCode(res.remediated_code);
+      }
+      setStatusMessage(res.api_key_configured
+        ? "NVIDIA DeepSeek-R1 post-quantum refactoring complete with extracted chain-of-thought."
+        : "NVIDIA API key not set. Retrieved NIST RAG standards and applied deterministic AST patch.");
+    } catch (err) {
+      setStatusMessage(`DeepSeek-R1 error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsAiRefactoring(false);
+    }
   }
 
   // Handle entire folder upload
@@ -133,6 +235,7 @@ export function AutonomousLoopPanel({
       } catch (err) {}
     }
     setCodebaseFiles(parsed);
+    setUploadedZip(null);
     setMode("codebase");
     setStatusMessage(`Loaded ${parsed.length} source files from selected project folder.`);
   }
@@ -179,11 +282,16 @@ export function AutonomousLoopPanel({
           formData
         );
       } else if (mode === "codebase" && codebaseFiles.length > 0) {
+        const normalizedFiles = codebaseFiles.map((f) => ({
+          path: f.path,
+          content: f.content,
+          language: (f as any).language ? String((f as any).language).toLowerCase() : undefined,
+        }));
         res = await requestApi<CodebasePatchResponse>(
           "/migration/patch-codebase",
           project,
           token,
-          { files: codebaseFiles }
+          { files: normalizedFiles }
         );
       } else {
         // Single snippet mode
@@ -235,10 +343,15 @@ export function AutonomousLoopPanel({
         });
         blob = await res.blob();
       } else if (mode === "codebase" && codebaseFiles.length > 0) {
+        const normalizedFiles = codebaseFiles.map((f) => ({
+          path: f.path,
+          content: f.content,
+          language: (f as any).language ? String((f as any).language).toLowerCase() : undefined,
+        }));
         const res = await fetch(`/api/migration/download-patched-zip?project=${encodeURIComponent(project)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ files: codebaseFiles }),
+          body: JSON.stringify({ files: normalizedFiles }),
         });
         blob = await res.blob();
       } else {
@@ -395,75 +508,250 @@ export function AutonomousLoopPanel({
                 ))}
               </div>
             ) : (
-              /* Full Codebase Upload Controls */
-              <div className="mt-4 space-y-4">
+              /* Full Codebase Ingestion Controls */
+              <div className="mt-4 space-y-3">
                 <p className="text-[11px] font-medium text-quiet uppercase tracking-wider">
-                  Upload Complete Project
+                  Select Project Ingestion Source
                 </p>
 
-                {/* Upload ZIP Archive */}
-                <label className="block cursor-pointer rounded-md border border-dashed border-cyan-500/40 bg-cyan-500/5 p-4 text-center hover:bg-cyan-500/10 transition-colors">
-                  <UploadCloud size={24} className="mx-auto text-teal" />
-                  <span className="mt-2 block text-xs font-semibold text-foreground">
-                    Upload Project ZIP (.zip, .tar.gz)
-                  </span>
-                  <span className="text-[10px] text-quiet">
-                    Contains frontend &amp; backend code
-                  </span>
-                  <input
-                    type="file"
-                    accept=".zip,.tar.gz,.tgz,.tar"
-                    className="sr-only"
-                    onChange={handleZipUpload}
-                  />
-                </label>
+                {/* Sub-tabs: GitHub vs ZIP vs Folder */}
+                <div className="grid grid-cols-3 gap-1 rounded-md border border-subtle bg-canvas/60 p-1 text-[11px] font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setCodebaseInputType("github")}
+                    className={`flex items-center justify-center gap-1.5 rounded py-1.5 transition-colors ${
+                      codebaseInputType === "github"
+                        ? "bg-teal text-slate-950 shadow-xs"
+                        : "text-quiet hover:text-foreground"
+                    }`}
+                  >
+                    <GithubIcon size={13} />
+                    <span>GitHub</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCodebaseInputType("zip")}
+                    className={`flex items-center justify-center gap-1.5 rounded py-1.5 transition-colors ${
+                      codebaseInputType === "zip"
+                        ? "bg-teal text-slate-950 shadow-xs"
+                        : "text-quiet hover:text-foreground"
+                    }`}
+                  >
+                    <UploadCloud size={13} />
+                    <span>ZIP File</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCodebaseInputType("folder")}
+                    className={`flex items-center justify-center gap-1.5 rounded py-1.5 transition-colors ${
+                      codebaseInputType === "folder"
+                        ? "bg-teal text-slate-950 shadow-xs"
+                        : "text-quiet hover:text-foreground"
+                    }`}
+                  >
+                    <FolderArchive size={13} />
+                    <span>Folder</span>
+                  </button>
+                </div>
 
-                {/* Or Choose Directory */}
-                <label className="block cursor-pointer rounded-md border border-dashed border-subtle bg-canvas/40 p-4 text-center hover:bg-surface-raised transition-colors">
-                  <FolderArchive size={24} className="mx-auto text-quiet" />
-                  <span className="mt-2 block text-xs font-semibold text-foreground">
-                    Or Select Source Folder
-                  </span>
-                  <span className="text-[10px] text-quiet">
-                    Picks all nested source files
-                  </span>
-                  <input
-                    type="file"
-                    multiple
-                    {...{ webkitdirectory: "" }}
-                    className="sr-only"
-                    onChange={handleFolderUpload}
-                  />
-                </label>
+                {/* 1. Direct GitHub Ingestion */}
+                {codebaseInputType === "github" && (
+                  <div className="rounded-md border border-cyan-500/30 bg-cyan-500/5 p-3 space-y-2.5">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-foreground">
+                        GitHub Repository URL
+                      </label>
+                      <input
+                        type="text"
+                        value={githubUrl}
+                        onChange={(e) => setGithubUrl(e.target.value)}
+                        placeholder="https://github.com/owner/repo or owner/repo"
+                        className="mt-1 w-full rounded border border-subtle bg-canvas px-2.5 py-1.5 text-xs font-mono text-foreground placeholder:text-quiet outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-quiet">
+                          Branch / Tag (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={githubBranch}
+                          onChange={(e) => setGithubBranch(e.target.value)}
+                          placeholder="main / master"
+                          className="mt-0.5 w-full rounded border border-subtle bg-canvas px-2 py-1 text-[11px] font-mono text-foreground placeholder:text-quiet outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-quiet">
+                          Subdirectory (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={githubSubpath}
+                          onChange={(e) => setGithubSubpath(e.target.value)}
+                          placeholder="e.g. src or backend"
+                          className="mt-0.5 w-full rounded border border-subtle bg-canvas px-2 py-1 text-[11px] font-mono text-foreground placeholder:text-quiet outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-quiet">
+                        GitHub Token (optional, for private repos)
+                      </label>
+                      <input
+                        type="password"
+                        value={githubToken}
+                        onChange={(e) => setGithubToken(e.target.value)}
+                        placeholder="ghp_..."
+                        className="mt-0.5 w-full rounded border border-subtle bg-canvas px-2 py-1 text-[11px] font-mono text-foreground placeholder:text-quiet outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handlePullGithub}
+                      disabled={isPullingGithub}
+                      className="w-full flex items-center justify-center gap-2 rounded bg-teal px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-teal/90 transition-all disabled:opacity-50"
+                    >
+                      {isPullingGithub ? (
+                        <RefreshCw size={13} className="animate-spin" />
+                      ) : (
+                        <GithubIcon size={13} />
+                      )}
+                      <span>{isPullingGithub ? "Pulling Repo..." : "Pull from GitHub"}</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* 2. Upload ZIP Archive */}
+                {codebaseInputType === "zip" && (
+                  <label className="block cursor-pointer rounded-md border border-dashed border-cyan-500/40 bg-cyan-500/5 p-4 text-center hover:bg-cyan-500/10 transition-colors">
+                    <UploadCloud size={24} className="mx-auto text-teal" />
+                    <span className="mt-2 block text-xs font-semibold text-foreground">
+                      Upload Project ZIP (.zip, .tar.gz)
+                    </span>
+                    <span className="text-[10px] text-quiet">
+                      Contains frontend &amp; backend code
+                    </span>
+                    <input
+                      type="file"
+                      accept=".zip,.tar.gz,.tgz,.tar"
+                      className="sr-only"
+                      onChange={handleZipUpload}
+                    />
+                  </label>
+                )}
+
+                {/* 3. Choose Directory */}
+                {codebaseInputType === "folder" && (
+                  <label className="block cursor-pointer rounded-md border border-dashed border-subtle bg-canvas/40 p-4 text-center hover:bg-surface-raised transition-colors">
+                    <FolderArchive size={24} className="mx-auto text-quiet" />
+                    <span className="mt-2 block text-xs font-semibold text-foreground">
+                      Select Source Folder
+                    </span>
+                    <span className="text-[10px] text-quiet">
+                      Picks all nested source files from disk
+                    </span>
+                    <input
+                      type="file"
+                      multiple
+                      {...{ webkitdirectory: "" }}
+                      className="sr-only"
+                      onChange={handleFolderUpload}
+                    />
+                  </label>
+                )}
 
                 {uploadedZip && (
-                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-400 flex items-center justify-between">
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-400 flex items-center justify-between font-mono">
                     <span className="truncate">Ready: {uploadedZip.name}</span>
-                    <CheckCircle2 size={14} className="shrink-0" />
+                    <CheckCircle2 size={13} className="shrink-0" />
                   </div>
                 )}
                 {codebaseFiles.length > 0 && (
-                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-400 flex items-center justify-between">
-                    <span>{codebaseFiles.length} files selected</span>
-                    <CheckCircle2 size={14} className="shrink-0" />
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-400 flex items-center justify-between font-mono">
+                    <span>{codebaseFiles.length} files loaded</span>
+                    <CheckCircle2 size={13} className="shrink-0" />
                   </div>
                 )}
               </div>
             )}
 
+            {/* NVIDIA DeepSeek-R1 AI Assistant Card */}
+            <div className="mt-4 rounded-lg border border-purple-500/30 bg-purple-500/5 p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-purple-400" />
+                  <span className="text-xs font-bold text-foreground">
+                    DeepSeek-R1 AI Refactor
+                  </span>
+                  <span className="rounded bg-purple-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-purple-300">
+                    NVIDIA NIM
+                  </span>
+                </div>
+                <label className="flex items-center gap-1.5 text-xs text-quiet cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableDeepSeek}
+                    onChange={(e) => setEnableDeepSeek(e.target.checked)}
+                    className="accent-purple-500"
+                  />
+                  <span>Active</span>
+                </label>
+              </div>
+
+              {enableDeepSeek && (
+                <div className="space-y-2 pt-2 border-t border-purple-500/20 text-xs">
+                  <div>
+                    <label className="block text-[10px] font-medium text-quiet">
+                      NVIDIA API Key:
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="nvapi-... (optional, leave empty for deterministic AST)"
+                      value={nvidiaApiKey}
+                      onChange={(e) => setNvidiaApiKey(e.target.value)}
+                      className="mt-1 w-full rounded border border-subtle bg-canvas px-2.5 py-1 text-xs font-mono text-foreground placeholder:text-quiet outline-none focus:border-purple-500"
+                    />
+                    <p className="mt-1 text-[10px] text-quiet">
+                      Retrieves NIST FIPS 203/204 RAG standards and invokes DeepSeek-R1 reasoning.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => runDeepSeekRefactor()}
+                    disabled={isAiRefactoring}
+                    className="w-full flex items-center justify-center gap-2 rounded bg-purple-600 hover:bg-purple-500 px-3 py-1.5 text-xs font-semibold text-white transition-all disabled:opacity-50"
+                  >
+                    {isAiRefactoring ? (
+                      <RefreshCw size={12} className="animate-spin" />
+                    ) : (
+                      <Sparkles size={12} />
+                    )}
+                    <span>
+                      {isAiRefactoring ? "Reasoning with DeepSeek-R1..." : "Run DeepSeek-R1 Refactor & Audit"}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Target Details Meta */}
-            <div className="mt-5 space-y-2 border-t border-subtle pt-4 text-xs font-mono text-quiet">
+            <div className="mt-4 space-y-1.5 border-t border-subtle pt-3 text-xs font-mono text-quiet">
               <div className="flex justify-between">
-                <span>Target File:</span>
-                <span className="text-foreground">
+                <span>Target:</span>
+                <span className="text-foreground truncate max-w-[200px]">
                   {mode === "codebase"
-                    ? uploadedZip?.name || `${codebaseFiles.length} files`
+                    ? uploadedZip?.name || `${codebaseFiles.length} files (GitHub/Dir)`
                     : selectedScenario.filename}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span>Analysis Mode:</span>
-                <span className="text-teal font-semibold">Strict Deterministic AST</span>
+                <span>Engine:</span>
+                <span className="text-teal font-semibold">
+                  {enableDeepSeek ? "NVIDIA DeepSeek-R1 + RAG" : "Strict Deterministic AST"}
+                </span>
               </div>
             </div>
           </div>
@@ -597,34 +885,179 @@ export function AutonomousLoopPanel({
         </div>
       </div>
 
+      {/* ── NVIDIA DeepSeek-R1 AI Reasoning & RAG Output ── */}
+      {aiResult && (
+        <div className="rounded-lg border border-purple-500/40 bg-surface p-5 shadow-xs space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-subtle pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-purple-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-purple-300 uppercase">
+                  {aiResult.mode === "nvidia_deepseek_r1" ? "DEEPSEEK-R1 REASONING" : "RAG STANDARDS + AST"}
+                </span>
+                <h3 className="text-base font-bold text-foreground">
+                  AI Cryptographic Analysis &amp; Refactoring
+                </h3>
+              </div>
+              <p className="mt-1 text-xs text-quiet">
+                Model: <span className="font-mono text-purple-300">{aiResult.model}</span> · Target: <span className="font-mono">{aiResult.file_path}</span>
+              </p>
+            </div>
+
+            {aiResult.api_key_configured && (
+              <span className="rounded border border-purple-500/30 bg-purple-500/10 px-2.5 py-1 text-[11px] font-semibold text-purple-300 flex items-center gap-1.5">
+                <Sparkles size={12} />
+                NVIDIA NIM Active
+              </span>
+            )}
+          </div>
+
+          {/* RAG Knowledge Standards Retrieved */}
+          {aiResult.rag_standards && aiResult.rag_standards.length > 0 && (
+            <div className="space-y-2">
+              <span className="text-[11px] font-semibold text-quiet uppercase tracking-wider flex items-center gap-1.5">
+                <BookOpen size={13} className="text-teal" />
+                Retrieved Authoritative Standards (RAG Augmented)
+              </span>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {aiResult.rag_standards.map((std) => (
+                  <div
+                    key={std.doc_id}
+                    onClick={() => setSelectedRagDoc(selectedRagDoc?.doc_id === std.doc_id ? null : std)}
+                    className="cursor-pointer rounded-md border border-cyan-500/30 bg-cyan-500/5 p-2.5 text-xs hover:bg-cyan-500/10 transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-teal truncate">{std.title}</span>
+                      <span className="rounded bg-cyan-500/20 px-1 py-0.2 font-mono text-[9px] text-teal">
+                        {(std.relevance_score * 10).toFixed(0)}% match
+                      </span>
+                    </div>
+                    <p className="mt-1 font-mono text-[10px] text-quiet truncate">
+                      {std.standard}
+                    </p>
+                    {selectedRagDoc?.doc_id === std.doc_id && (
+                      <div className="mt-2 pt-2 border-t border-cyan-500/20 text-[11px] text-foreground leading-relaxed whitespace-pre-wrap">
+                        {std.content}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* DeepSeek-R1 Chain of Thought Reasoning (<think> tags) */}
+          {aiResult.reasoning && (
+            <div className="rounded-md border border-purple-500/30 bg-purple-950/20 p-3 text-xs space-y-2">
+              <button
+                type="button"
+                onClick={() => setShowReasoning(!showReasoning)}
+                className="flex w-full items-center justify-between text-left font-bold text-purple-300"
+              >
+                <div className="flex items-center gap-2">
+                  <Bot size={14} />
+                  <span>DeepSeek-R1 Cryptographic Reasoning Trace (&lt;think&gt;)</span>
+                </div>
+                {showReasoning ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {showReasoning && (
+                <div className="mt-2 rounded bg-slate-950 p-3 font-mono text-[11px] text-slate-300 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+                  {aiResult.reasoning}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Explanation & Unified Diff */}
+          <div className="space-y-2">
+            <p className="text-xs text-foreground font-medium">
+              {aiResult.explanation}
+            </p>
+            {aiResult.unified_diff && (
+              <pre className="max-h-64 overflow-auto rounded bg-slate-950 p-3 font-mono text-[11px] text-slate-200 leading-relaxed">
+                {aiResult.unified_diff.split("\n").map((line, i) => {
+                  let color = "text-slate-300";
+                  if (line.startsWith("+") && !line.startsWith("+++")) color = "text-emerald-400 bg-emerald-950/40";
+                  else if (line.startsWith("-") && !line.startsWith("---")) color = "text-red-400 bg-red-950/40";
+                  else if (line.startsWith("@@")) color = "text-cyan-400";
+                  return <div key={i} className={color}>{line}</div>;
+                })}
+              </pre>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Remediation Diff & Patched Codebase Results ── */}
       {patchResult && (
-        <div className="rounded-lg border border-emerald-500/40 bg-surface p-5 shadow-xs space-y-4">
+        <div className={`rounded-lg border p-5 shadow-xs space-y-4 ${
+          patchResult.summary.vulnerable_files_count > 0
+            ? "border-emerald-500/40 bg-surface"
+            : patchResult.summary.vulnerabilities_found > 0
+            ? "border-amber-500/40 bg-surface"
+            : "border-cyan-500/40 bg-surface"
+        }`}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-subtle pb-4">
             <div>
               <div className="flex items-center gap-2">
-                <span className="rounded bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-400 uppercase">
-                  100% VERIFIED
-                </span>
+                {patchResult.summary.vulnerable_files_count > 0 ? (
+                  <span className="rounded bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-400 uppercase">
+                    {patchResult.summary.all_verified ? "100% VERIFIED" : `${patchResult.summary.remediation_rate_percent}% REMEDIATED`}
+                  </span>
+                ) : patchResult.summary.vulnerabilities_found > 0 ? (
+                  <span className="rounded bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-400 uppercase">
+                    ATTENTION NEEDED
+                  </span>
+                ) : (
+                  <span className="rounded bg-cyan-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-cyan-400 uppercase">
+                    VERIFIED CLEAN (0 WEAKNESSES)
+                  </span>
+                )}
                 <h3 className="text-base font-bold text-foreground">
                   Post-Quantum Remediation Results
                 </h3>
               </div>
               <p className="mt-1 text-xs text-quiet">
-                Scanned {patchResult.summary.total_files_scanned} files · Patched {patchResult.summary.vulnerable_files_count} vulnerable files · Eliminated {patchResult.summary.vulnerabilities_remediated} weaknesses with zero regressions.
+                {patchResult.summary.vulnerable_files_count > 0 ? (
+                  `Scanned ${patchResult.summary.total_files_scanned} files · Patched ${patchResult.summary.vulnerable_files_count} vulnerable files · Eliminated ${patchResult.summary.vulnerabilities_remediated} of ${patchResult.summary.vulnerabilities_found} weaknesses with zero regressions.`
+                ) : patchResult.summary.vulnerabilities_found > 0 ? (
+                  `Scanned ${patchResult.summary.total_files_scanned} files · Found ${patchResult.summary.vulnerabilities_found} weaknesses requiring manual or AI refactoring.`
+                ) : (
+                  `Scanned ${patchResult.summary.total_files_scanned} files · Zero cryptographic weaknesses found across all inspected files.`
+                )}
               </p>
             </div>
 
             {/* 1-Click Download Patched Codebase ZIP */}
-            <button
-              type="button"
-              onClick={downloadPatchedCodebaseZip}
-              className="flex items-center gap-2 rounded-md bg-emerald-500 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-md hover:bg-emerald-400 transition-all shrink-0"
-            >
-              <Download size={15} />
-              <span>Download Patched Codebase (.ZIP)</span>
-            </button>
+            {patchResult.summary.vulnerable_files_count > 0 && (
+              <button
+                type="button"
+                onClick={downloadPatchedCodebaseZip}
+                className="flex items-center gap-2 rounded-md bg-emerald-500 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-md hover:bg-emerald-400 transition-all shrink-0"
+              >
+                <Download size={15} />
+                <span>Download Patched Codebase (.ZIP)</span>
+              </button>
+            )}
           </div>
+
+          {/* If 0 files patched, display clean or review card */}
+          {patchResult.patched_files.length === 0 && (
+            <div className="flex items-center gap-3 rounded-md border border-subtle bg-canvas/40 p-4 text-xs text-quiet">
+              <ShieldCheck size={20} className={patchResult.summary.vulnerabilities_found > 0 ? "text-amber-400 shrink-0" : "text-cyan-400 shrink-0"} />
+              <div>
+                <p className="font-semibold text-foreground">
+                  {patchResult.summary.vulnerabilities_found > 0
+                    ? `${patchResult.summary.vulnerabilities_found} Cryptographic Weaknesses Flagged`
+                    : "All Files Verified Clean"}
+                </p>
+                <p className="mt-0.5">
+                  {patchResult.summary.vulnerabilities_found > 0
+                    ? "Static patterns were flagged but require architectural migration. Use the DeepSeek-R1 AI assistant above to generate quantum-safe replacements."
+                    : `All ${patchResult.summary.total_files_scanned} files passed cryptographic inspection. No legacy primitives (MD5, SHA-1, DES, 3DES, RC4, RSA < 2048) found.`}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Patched Files Tree & Diff Viewer */}
           {patchResult.patched_files.length > 0 && (

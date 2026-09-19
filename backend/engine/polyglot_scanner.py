@@ -442,6 +442,32 @@ LANGUAGE_RULES = {
          "RSA key pair generated with modulusLength < 2048.",
          "Set modulusLength to at least 3072 or use Ed25519.",
          "Vulnerable to Shor's algorithm.")
+    ],
+    "generic": [
+        (r"\b(?:MD5_Init|MD5_Update|MD5_Final|MD5)\b", "MD5", "Hash Function", "CRITICAL",
+         "MD5 hash detected in generic source code / symbols.",
+         "Upgrade to SHA-256 (FIPS 180-4).",
+         "Broken classically; vulnerable to Grover search."),
+        (r"\b(?:SHA1_Init|SHA1_Update|SHA1_Final|SHA-?1)\b", "SHA-1", "Hash Function", "HIGH",
+         "SHA-1 hash detected in generic source code / symbols.",
+         "Upgrade to SHA-256.",
+         "Susceptible to collision attacks."),
+        (r"\b(?:DES_ecb_encrypt|DES_ncbc_encrypt|DES_set_key|DES)\b", "DES", "Symmetric Cipher", "CRITICAL",
+         "56-bit DES symmetric cipher detected in generic source code.",
+         "Upgrade to AES-256.",
+         "Trivially broken classically."),
+        (r"\b(?:3DES|TripleDES|DESede)\b", "3DES", "Symmetric Cipher", "HIGH",
+         "Triple-DES detected.",
+         "Upgrade to AES-256-GCM.",
+         "Sweet32 collision vulnerability."),
+        (r"\b(?:RC4|ARC4)\b", "RC4", "Stream Cipher", "CRITICAL",
+         "RC4 stream cipher detected.",
+         "Upgrade to AES-256-GCM or ChaCha20-Poly1305.",
+         "Keystream bias flaws."),
+        (r"\b(?:RSA_generate_key|modulusLength|key_size|initialize)\b.*?(?:512|1024)\b", "RSA-1024", "Asymmetric Key", "CRITICAL",
+         "RSA key length < 2048 detected in generic source / configuration.",
+         "Upgrade to RSA >= 3072 or ML-KEM (FIPS 203).",
+         "Shor's algorithm breaks classical RSA in polynomial time.")
     ]
 }
 
@@ -456,19 +482,28 @@ def mask_comments(source):
 
 
 def scan_polyglot_code(source_code: str, language: str = 'python') -> Dict[str, Any]:
-    lang = language.lower().strip()
+    raw_lang = language.lower().strip()
+    # Normalize language aliases
+    lang_map = {
+        'js': 'javascript', 'ts': 'javascript', 'jsx': 'javascript', 'tsx': 'javascript',
+        'c': 'c_cpp', 'cpp': 'c_cpp', 'c++': 'c_cpp', 'h': 'c_cpp', 'hpp': 'c_cpp', 'cc': 'c_cpp',
+        'go': 'golang', 'py': 'python', 'java': 'java', 'rust': 'generic', 'generic': 'generic'
+    }
+    lang = lang_map.get(raw_lang, raw_lang)
     if lang not in LANGUAGE_RULES:
-        raise ValueError('Unsupported language')
+        lang = 'generic'
     cleaned = mask_comments(source_code) if lang != 'python' else source_code
     lines = source_code.splitlines()
     findings = []
-    for pattern, primitive, category, severity, issue, recommendation, quantum_risk in LANGUAGE_RULES[lang]:
+    for pattern, primitive, category, severity, issue, recommendation, quantum_risk in LANGUAGE_RULES.get(lang, []):
         for match in re.finditer(pattern, cleaned, re.IGNORECASE):
             line = cleaned.count('\n', 0, match.start()) + 1
-            findings.append({'line': line, 'code': lines[line - 1].strip(), 'primitive': primitive,
+            code_snippet = lines[line - 1].strip() if 1 <= line <= len(lines) else ""
+            findings.append({'line': line, 'code': code_snippet, 'primitive': primitive,
                 'category': category, 'severity': severity, 'issue': issue,
                 'nist_recommendation': recommendation, 'quantum_risk': quantum_risk, 'language': lang})
     findings.sort(key=lambda f: f['line'])
     return {'language': lang, 'findings': findings, 'total_findings': len(findings),
             'critical_count': sum(f['severity'] == 'CRITICAL' for f in findings),
             'high_count': sum(f['severity'] == 'HIGH' for f in findings), 'remediation': ''}
+

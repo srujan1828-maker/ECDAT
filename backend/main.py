@@ -74,6 +74,9 @@ from engine.patch_engine import AutoPatchEngine
 from engine.quantum_estimator import QuantumResourceEstimator
 from engine.binary_classifier import BinaryMLClassifier
 from engine.demo_flow import SihDemoRunner
+from engine.github_engine import GitHubEngine
+from engine.rag_engine import rag_engine
+from engine.llm_engine import DeepSeekR1Engine
 
 
 @asynccontextmanager
@@ -1501,6 +1504,107 @@ async def download_patched_zip_upload(
             "Content-Disposition": 'attachment; filename="ecdat_patched_codebase.zip"',
             "Content-Length": str(len(zip_bytes)),
         }
+    )
+
+
+class GitHubPullRequest(BaseModel):
+    url: str = Field(min_length=3, max_length=500)
+    ref: Optional[str] = Field(default=None, max_length=100)
+    subpath: Optional[str] = Field(default=None, max_length=300)
+    token: Optional[str] = Field(default=None, max_length=200)
+
+
+@router.post('/github/pull')
+def github_pull(req: GitHubPullRequest):
+    try:
+        data = GitHubEngine.fetch_repository_files(
+            url=req.url,
+            ref=req.ref,
+            subpath=req.subpath,
+            token=req.token,
+        )
+        return data
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"GitHub pull failed: {exc}")
+
+
+@router.post('/github/scan', status_code=202)
+def github_scan(req: GitHubPullRequest, request: Request, project: str = Project):
+    try:
+        repo_data = GitHubEngine.fetch_repository_files(
+            url=req.url,
+            ref=req.ref,
+            subpath=req.subpath,
+            token=req.token,
+        )
+        files = repo_data.get("files", [])
+        return enqueue(request, project, 'code', {'files': files}, lambda p: scan_sources(p['files']))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"GitHub scan failed: {exc}")
+
+
+class RAGQueryRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    language: Optional[str] = None
+    category: Optional[str] = None
+    top_k: int = Field(default=3, ge=1, le=10)
+
+
+@router.post('/ai/rag/query')
+def query_rag_standards(req: RAGQueryRequest):
+    results = rag_engine.retrieve(
+        query=req.query,
+        language=req.language,
+        category=req.category,
+        top_k=req.top_k,
+    )
+    return {
+        "query": req.query,
+        "language": req.language,
+        "total_results": len(results),
+        "results": results,
+    }
+
+
+class AIRefactorRequest(BaseModel):
+    file_path: str = Field(default="snippet.py", max_length=500)
+    source_code: str = Field(min_length=1, max_length=10_000_000)
+    language: str = "python"
+    findings: Optional[list[dict]] = None
+    nvidia_api_key: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post('/ai/refactor')
+def ai_refactor_endpoint(req: AIRefactorRequest):
+    return DeepSeekR1Engine.refactor_code(
+        file_path=req.file_path,
+        source_code=req.source_code,
+        language=req.language,
+        findings=req.findings,
+        api_key=req.nvidia_api_key,
+        model=req.model or "deepseek-ai/deepseek-r1",
+    )
+
+
+class AIExplainRequest(BaseModel):
+    primitive: str = Field(min_length=1, max_length=100)
+    issue: str = Field(default="", max_length=200)
+    code_context: Optional[str] = None
+    nvidia_api_key: Optional[str] = None
+
+
+@router.post('/ai/explain')
+def ai_explain_endpoint(req: AIExplainRequest):
+    return DeepSeekR1Engine.explain_finding(
+        primitive=req.primitive,
+        issue=req.issue,
+        code_context=req.code_context,
+        api_key=req.nvidia_api_key,
     )
 
 

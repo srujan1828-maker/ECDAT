@@ -162,6 +162,7 @@ export default function Dashboard() {
   const [projectInput, setProjectInput] = useState("default");
   const [project, setProject] = useState("default");
   const [token, setToken] = useState("");
+  const [nvidiaKey, setNvidiaKey] = useState("");
   const [mode, setMode] = useState<"network" | "code" | "binary" | "pcap">("network");
   const [target, setTarget] = useState("");
   const [language, setLanguage] = useState("python");
@@ -181,6 +182,11 @@ export default function Dashboard() {
   );
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedKey = localStorage.getItem("ecdat_nvidia_api_key");
+      if (savedKey) setNvidiaKey(savedKey);
+    }
+
     function readHash() {
       const hash = window.location.hash.slice(1);
       if (hash === "migration") setView("migration");
@@ -608,9 +614,26 @@ export default function Dashboard() {
                 }}
               />
             </label>
+            <label className="mt-3 block text-xs text-quiet">
+              NVIDIA NIM API Key (DeepSeek-R1)
+              <input
+                type="password"
+                autoComplete="off"
+                aria-label="NVIDIA NIM API Key"
+                placeholder="nvapi-... (for DeepSeek-R1 PQC Refactoring)"
+                className={`${inputClass} mt-2 !text-xs font-mono`}
+                value={nvidiaKey}
+                onChange={(e) => {
+                  setNvidiaKey(e.target.value);
+                  if (typeof window !== "undefined") {
+                    localStorage.setItem("ecdat_nvidia_api_key", e.target.value.trim());
+                  }
+                }}
+              />
+            </label>
             <p className="mt-2 text-[11px] leading-relaxed text-quiet">
               Kept only for this page session. Projects share the same access
-              token.
+              token and NVIDIA NIM key.
             </p>
           </details>
         </div>
@@ -885,6 +908,19 @@ export default function Dashboard() {
                               }
                             />
                           </label>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 rounded-md border border-subtle bg-canvas/40 p-2.5 text-xs text-quiet">
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-teal font-semibold">GitHub Integration:</span>
+                            Pull public or private repos directly into ECDAT.
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setView("patch_migration")}
+                            className="rounded bg-teal/15 px-2.5 py-1 text-[11px] font-semibold text-teal hover:bg-teal/25 transition-colors"
+                          >
+                            Pull from GitHub →
+                          </button>
                         </div>
                         {sourceFiles.length > 0 ? (
                           <div className="flex items-center justify-between gap-2 rounded-md border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs text-teal">

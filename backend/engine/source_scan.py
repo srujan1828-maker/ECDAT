@@ -7,19 +7,49 @@ from .polyglot_scanner import scan_polyglot_code
 
 EXTENSIONS = {
     '.py': 'python',
+    '.pyw': 'python',
     '.java': 'java',
     '.c': 'c_cpp',
     '.h': 'c_cpp',
     '.cpp': 'c_cpp',
     '.hpp': 'c_cpp',
+    '.cc': 'c_cpp',
+    '.cxx': 'c_cpp',
     '.go': 'golang',
     '.js': 'javascript',
     '.ts': 'javascript',
     '.jsx': 'javascript',
     '.tsx': 'javascript',
+    '.mjs': 'javascript',
+    '.cjs': 'javascript',
     '.rs': 'rust',
 }
 LANGUAGES = {'python', 'java', 'c_cpp', 'golang', 'javascript', 'rust'}
+
+LANGUAGE_ALIASES = {
+    'python': 'python', 'py': 'python', 'python3': 'python', 'pyw': 'python',
+    'javascript': 'javascript', 'js': 'javascript', 'ts': 'javascript',
+    'jsx': 'javascript', 'tsx': 'javascript', 'mjs': 'javascript', 'cjs': 'javascript',
+    'node': 'javascript', 'nodejs': 'javascript', 'typescript': 'javascript',
+    'c_cpp': 'c_cpp', 'c': 'c_cpp', 'cpp': 'c_cpp', 'c++': 'c_cpp',
+    'h': 'c_cpp', 'hpp': 'c_cpp', 'cc': 'c_cpp', 'cxx': 'c_cpp',
+    'golang': 'golang', 'go': 'golang',
+    'java': 'java',
+    'rust': 'rust', 'rs': 'rust',
+    'generic': 'generic', 'unknown': 'generic', 'binary': 'generic',
+}
+
+
+def normalize_language(raw_lang: str | None, path: str = "") -> str:
+    if raw_lang:
+        clean = str(raw_lang).strip().lower()
+        if clean in LANGUAGE_ALIASES:
+            return LANGUAGE_ALIASES[clean]
+    ext = PurePosixPath(path).suffix.lower()
+    if ext in EXTENSIONS:
+        return EXTENSIONS[ext]
+    return 'generic'
+
 
 MANIFEST_NAMES = {
     'requirements.txt', 'pyproject.toml', 'poetry.lock',
@@ -155,7 +185,7 @@ def scan_sources(files, deep_scan: bool = True):
     # Process files
     for file in files:
         path, source = file['path'], file['content']
-        lang = file.get('language') or EXTENSIONS.get(PurePosixPath(path).suffix.lower())
+        lang = normalize_language(file.get('language'), path)
 
         # Check if manifest or lockfile
         if is_manifest_file(path):
