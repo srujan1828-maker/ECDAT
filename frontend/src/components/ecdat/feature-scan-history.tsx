@@ -20,12 +20,6 @@ import {
   Copy,
   Check,
   Radio,
-  Zap,
-  Network,
-  Sparkles,
-  ExternalLink,
-  Shield,
-  Layers,
 } from "lucide-react";
 import { Scan, Finding } from "@/lib/api";
 
@@ -41,8 +35,6 @@ interface FeatureScanHistoryProps {
   onRescanTarget?: (target: string, language?: string, code?: string) => void;
   onDownloadSingleCbom: (scan: Scan) => void;
   onRefresh: () => void;
-  onPatchAll?: (scan: Scan) => void;
-  onViewGraph?: () => void;
 }
 
 const kindMeta = {
@@ -129,12 +121,9 @@ export function FeatureScanHistory({
   onRescanTarget,
   onDownloadSingleCbom,
   onRefresh,
-  onPatchAll,
-  onViewGraph,
 }: FeatureScanHistoryProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState(false);
-  const [activeTab, setActiveTab] = useState<"findings" | "evidence">("findings");
 
   // STRICT FILTERING: Only scans belonging to THIS specific feature
   const featureScans = useMemo(() => {
@@ -360,22 +349,16 @@ export function FeatureScanHistory({
               </div>
             ) : (
               <>
-                {/* Active scan header matching Screenshot 1 */}
+                {/* Active scan header */}
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-subtle pb-4">
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <h2 className="text-base sm:text-lg font-bold text-foreground tracking-tight flex items-center gap-2">
-                        <span>{kindMeta[mode].label} Result · #{activeScan.id.slice(0, 8)}</span>
-                      </h2>
-                      <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
-                        {activeScan.status.toUpperCase()}
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-bold text-foreground break-all">
+                        {getScanTargetLabel(activeScan)}
                       </span>
+                      <StatusBadge status={activeScan.status} />
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2.5 text-xs text-quiet">
-                      <span className="font-mono text-foreground/80 font-medium">
-                        Target: {getScanTargetLabel(activeScan)}
-                      </span>
-                      <span>•</span>
+                    <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-quiet">
                       <span>
                         Scan ID:{" "}
                         <button
@@ -383,7 +366,7 @@ export function FeatureScanHistory({
                           className="font-mono hover:text-cyan-400 inline-flex items-center gap-1"
                           title="Click to copy full ID"
                         >
-                          {activeScan.id.slice(0, 10)}...
+                          {activeScan.id.slice(0, 12)}...
                           {copiedId ? <Check size={11} /> : <Copy size={11} />}
                         </button>
                       </span>
@@ -398,55 +381,14 @@ export function FeatureScanHistory({
                     </div>
                   </div>
 
-                  {/* Actions matching Screenshot 1 */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    {/* Primary Patch All button */}
-                    <button
-                      type="button"
-                      onClick={() => onPatchAll?.(activeScan)}
-                      className="flex items-center gap-1.5 rounded-md bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 px-3.5 py-1.5 text-xs font-bold text-slate-950 shadow-md transition-all active:scale-95"
-                      title="Run automated PQC patching on discovered issues"
-                    >
-                      <Zap size={14} className="fill-current" />
-                      Patch All Issues
-                    </button>
-
-                    {/* View in Graph */}
-                    {onViewGraph && (
-                      <button
-                        type="button"
-                        onClick={onViewGraph}
-                        className="flex items-center gap-1 rounded-md border border-subtle bg-surface px-2.5 py-1.5 text-xs font-medium text-quiet hover:bg-surface-raised hover:text-foreground transition-all"
-                        title="Visualize cryptographic relationships in GQL Graph"
-                      >
-                        <Network size={13} />
-                        View in Graph
-                      </button>
-                    )}
-
-                    {/* View Evidence Toggle */}
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab((t) => (t === "evidence" ? "findings" : "evidence"))}
-                      className={`flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-all ${
-                        activeTab === "evidence"
-                          ? "border-cyan-500/40 bg-cyan-500/10 text-teal"
-                          : "border-subtle bg-surface text-quiet hover:bg-surface-raised hover:text-foreground"
-                      }`}
-                      title="Toggle detailed technical evidence"
-                    >
-                      <FileText size={13} />
-                      {activeTab === "evidence" ? "Back to Findings" : "View Evidence"}
-                    </button>
-
+                  <div className="flex items-center gap-2">
                     {/* Re-scan action */}
                     {onRescanTarget && activeScan.result?.target && (
                       <button
-                        type="button"
                         onClick={() =>
                           onRescanTarget(activeScan.result?.target || "")
                         }
-                        className="rounded border border-subtle bg-surface px-2.5 py-1.5 text-xs text-quiet hover:bg-surface-raised hover:text-foreground flex items-center gap-1"
+                        className="rounded border border-subtle bg-surface px-2.5 py-1 text-xs text-quiet hover:bg-surface-raised hover:text-foreground flex items-center gap-1"
                         title="Load target into scan box above"
                       >
                         <RotateCcw size={12} />
@@ -456,10 +398,9 @@ export function FeatureScanHistory({
 
                     {/* Single scan CBOM download */}
                     <button
-                      type="button"
                       onClick={() => onDownloadSingleCbom(activeScan)}
                       disabled={activeScan.status !== "completed"}
-                      className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1.5 text-xs text-teal hover:bg-cyan-500/20 flex items-center gap-1 disabled:opacity-50"
+                      className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-400 hover:bg-cyan-500/20 flex items-center gap-1 disabled:opacity-50"
                       title="Download CycloneDX 1.6 CBOM for this scan"
                     >
                       <Download size={12} />
@@ -495,276 +436,13 @@ export function FeatureScanHistory({
                   </div>
                 )}
 
-                {/* COMPLETED FINDINGS MATCHING SCREENSHOT 1 */}
-                {activeScan.status === "completed" && activeScan.result && (() => {
-                  const findingsList: Finding[] = (activeScan.result?.findings || activeScan.result?.detections || []) as Finding[];
-
-                  // Standardize findings for table display across any scan type
-                  const tableFindings = (() => {
-                    if (findingsList.length > 0) {
-                      return findingsList.map((f: Finding) => {
-                        const p = (f.primitive || "Cryptographic Primitive").toUpperCase();
-                        let quantumRisk = "Shor's Algorithm Factoring Break";
-                        let migrationTarget = "NIST FIPS 203 (ML-KEM-768)";
-
-                        if (p.includes("MD5") || p.includes("SHA1")) {
-                          quantumRisk = "Broken Collision Resistance (Shor/Classical)";
-                          migrationTarget = "NIST FIPS 180-4 (SHA-256) / SHA-3";
-                        } else if (p.includes("DES") || p.includes("RC4") || p.includes("BLOWFISH")) {
-                          quantumRisk = "Exhaustive Key Exhaustion / Weak S-Box";
-                          migrationTarget = "NIST FIPS 197 (AES-256-GCM)";
-                        } else if (p.includes("RSA")) {
-                          quantumRisk = "Shor's Algorithm Factoring Break";
-                          migrationTarget = "ML-KEM-768 (FIPS 203) / ML-DSA (FIPS 204)";
-                        } else if (p.includes("ECDSA") || p.includes("ECC") || p.includes("SECP")) {
-                          quantumRisk = "Shor's Elliptic Curve Discrete Log Break";
-                          migrationTarget = "ML-DSA-65 (FIPS 204) / SLH-DSA (FIPS 205)";
-                        } else if (p.includes("AES") || p.includes("SHA256") || p.includes("MLKEM")) {
-                          quantumRisk = "Grover 128-bit Bound (Quantum Resilient)";
-                          migrationTarget = "Conforms to Post-Quantum Standards";
-                        }
-
-                        return {
-                          primitive: f.primitive || "Cryptographic Call",
-                          severity: f.severity || (p.includes("MD5") || p.includes("DES") || p.includes("1024") ? "critical" : "high"),
-                          location: f.file ? `${f.file}${f.line ? `:${f.line}` : ""}` : (f.offset ? `Section ${f.file || ".text"} @ ${f.offset}` : "Source code"),
-                          quantumRisk,
-                          migrationTarget,
-                          description: f.description || "",
-                        };
-                      });
-                    }
-
-                    if (mode === "network" && activeScan.result) {
-                      const res = activeScan.result;
-                      const isVuln = res.quantum_vulnerable !== false;
-                      return [{
-                        primitive: res.cipher_name || res.protocol || "TLS 1.2 / 1.3 Session",
-                        severity: isVuln ? "critical" : "low",
-                        location: res.target ? `${res.target}:443` : "Live HTTPS Handshake",
-                        quantumRisk: isVuln ? "Harvest-Now-Decrypt-Later (HNDL) Vulnerable" : "Quantum Resilient Hybrid PQC",
-                        migrationTarget: isVuln ? "NIST FIPS 203 ML-KEM-768 Hybrid TLS 1.3" : "Production Hybrid PQC Active",
-                        description: res.pqc_status || "Observed TLS handshake cipher suite and key exchange",
-                      }];
-                    }
-
-                    if (mode === "pcap" && activeScan.result?.sessions?.length) {
-                      return activeScan.result.sessions.map((s: any) => ({
-                        primitive: s.selected_cipher || "TLS Handshake",
-                        severity: s.has_pqc_hybrid ? "low" : "critical",
-                        location: `${s.client_ip}:${s.client_port} → ${s.server_ip}:${s.server_port}`,
-                        quantumRisk: s.has_pqc_hybrid ? "Protected Against Retroactive Decryption" : "Harvest-Now-Decrypt-Later (HNDL) Exposure",
-                        migrationTarget: "FIPS 203 ML-KEM Hybrid Key Exchange",
-                        description: `JA4 Fingerprint: ${s.ja4_fingerprint || "N/A"}`,
-                      }));
-                    }
-
-                    return [];
-                  })();
-
-                  const assetsScanned = mode === "network" || mode === "pcap" ? 1 : Math.max(1, tableFindings.length);
-                  const quantumVulnCount = tableFindings.filter((f) => f.severity.toLowerCase() === "critical" || f.quantumRisk.includes("Shor") || f.quantumRisk.includes("Harvest") || f.quantumRisk.includes("Vulnerable")).length || 1;
-                  const quantumSafeCount = tableFindings.filter((f) => f.severity.toLowerCase() === "low" || f.quantumRisk.includes("Resilient") || f.quantumRisk.includes("Grover")).length;
-                  const classicalDepCount = tableFindings.filter((f) => f.primitive.toUpperCase().includes("MD5") || f.primitive.toUpperCase().includes("DES") || f.primitive.toUpperCase().includes("SHA1") || f.primitive.toUpperCase().includes("RC4")).length || (tableFindings.some(f => f.quantumRisk.includes("Collision")) ? 1 : 0);
-
-                  return (
-                    <div className="space-y-6">
-                      {/* ─── 1. DISCOVERY SUMMARY & RISK DISTRIBUTION (Screenshot 1) ─── */}
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between border-b border-subtle pb-2">
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-quiet">
-                            Discovery Summary &amp; Risk Distribution
-                          </h3>
-                          <span className="font-mono text-[11px] text-teal">
-                            AST Coverage: 100% · Deterministic Provenance
-                          </span>
-                        </div>
-
-                        {/* 5 Metric Boxes */}
-                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                          <div className="rounded-lg border border-subtle bg-surface p-3.5 text-center sm:text-left shadow-2xs">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-quiet">Assets Scanned</p>
-                            <p className="mt-1 font-mono text-2xl font-bold text-foreground">{assetsScanned}</p>
-                          </div>
-                          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3.5 text-center sm:text-left shadow-2xs">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">Quantum-Safe</p>
-                            <p className="mt-1 font-mono text-2xl font-bold text-emerald-400">{quantumSafeCount}</p>
-                          </div>
-                          <div className="rounded-lg border border-red-500/25 bg-red-500/5 p-3.5 text-center sm:text-left shadow-2xs">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-red-400">Quantum-Vulnerable</p>
-                            <p className="mt-1 font-mono text-2xl font-bold text-red-400">{quantumVulnCount}</p>
-                          </div>
-                          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3.5 text-center sm:text-left shadow-2xs">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">Classical Deprecated</p>
-                            <p className="mt-1 font-mono text-2xl font-bold text-amber-400">{classicalDepCount}</p>
-                          </div>
-                          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3.5 text-center sm:text-left shadow-2xs">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-teal">AST Coverage</p>
-                            <p className="mt-1 font-mono text-2xl font-bold text-teal">100%</p>
-                          </div>
-                        </div>
-
-                        {/* Risk Composition Bar */}
-                        <div className="pt-1">
-                          <div className="w-full rounded-md bg-red-500 py-1.5 px-3 text-center text-xs font-bold text-white tracking-wide shadow-xs">
-                            CRITICAL: 100%
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* ─── 2. DISCOVERED CRYPTOGRAPHIC FINDINGS TABLE (Screenshot 1) ─── */}
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-quiet">
-                            Discovered Cryptographic Findings ({tableFindings.length})
-                          </h3>
-                          <span className="text-[11px] text-quiet">
-                            Source locations, cryptographic families &amp; quantum risk
-                          </span>
-                        </div>
-
-                        <div className="overflow-x-auto rounded-lg border border-subtle bg-surface shadow-2xs">
-                          <table className="w-full text-left text-xs">
-                            <thead>
-                              <tr className="border-b border-subtle bg-canvas/40 text-[10px] uppercase font-semibold text-quiet tracking-wider">
-                                <th className="p-3">Primitive &amp; Cipher</th>
-                                <th className="p-3">Severity</th>
-                                <th className="p-3">Location / Source</th>
-                                <th className="p-3">Quantum Risk</th>
-                                <th className="p-3">Migration Target</th>
-                                <th className="p-3 text-right">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-subtle">
-                              {tableFindings.map((row, idx) => {
-                                const sev = row.severity.toLowerCase();
-                                const sevBadge = sev === "critical"
-                                  ? "border-red-500/30 bg-red-500/10 text-red-400"
-                                  : sev === "high"
-                                    ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
-
-                                return (
-                                  <tr key={idx} className="hover:bg-surface-raised/50 transition-colors">
-                                    <td className="p-3 font-mono font-bold text-foreground">
-                                      <div className="flex items-center gap-1.5">
-                                        <FileCode2 size={13} className="text-teal shrink-0" />
-                                        <span>{row.primitive}</span>
-                                      </div>
-                                    </td>
-                                    <td className="p-3">
-                                      <span className={`inline-flex rounded border px-2 py-0.5 font-mono text-[9px] font-bold uppercase ${sevBadge}`}>
-                                        {row.severity}
-                                      </span>
-                                    </td>
-                                    <td className="p-3 font-mono text-[11px] text-quiet max-w-[180px] truncate" title={row.location}>
-                                      {row.location}
-                                    </td>
-                                    <td className="p-3 text-[11px] text-red-400/90 font-medium">
-                                      {row.quantumRisk}
-                                    </td>
-                                    <td className="p-3 text-[11px] text-teal font-medium">
-                                      {row.migrationTarget}
-                                    </td>
-                                    <td className="p-3 text-right">
-                                      <button
-                                        type="button"
-                                        onClick={() => onPatchAll?.(activeScan)}
-                                        className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-teal hover:bg-cyan-500/20 shadow-2xs transition-all active:scale-95"
-                                        title="Patch this cryptographic finding"
-                                      >
-                                        <Zap size={11} className="fill-current" />
-                                        Patch
-                                      </button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                      {/* ─── 3. VISUAL QUANTUM THREAT TIMELINE (MOSCA Z-HORIZON) (Screenshot 1) ─── */}
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-quiet">
-                            Visual Quantum Threat Timeline (Mosca Z-Horizon)
-                          </h3>
-                          <span className="font-mono text-[11px] text-quiet">
-                            CRQC Risk Horizon (X + Y &gt; Z)
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                          {/* Card 1: Immediate */}
-                          <div className="rounded-lg border border-red-500/30 bg-surface p-4 space-y-2 shadow-2xs relative overflow-hidden">
-                            <div className="absolute top-0 left-0 right-0 h-1 bg-red-500" />
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-xs text-foreground">Immediate (2024–2026)</span>
-                              <span className="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-red-400">
-                                CRITICAL
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-quiet leading-relaxed">
-                              Harvest-Now-Decrypt-Later (HNDL) exposure. Adversaries capturing encrypted sessions today can decrypt once CRQC arrives.
-                            </p>
-                            <div className="pt-2 border-t border-subtle text-[10px] font-mono text-red-400">
-                              Target: Asymmetric key exchange &amp; weak hashing
-                            </div>
-                          </div>
-
-                          {/* Card 2: Migration Window */}
-                          <div className="rounded-lg border border-amber-500/30 bg-surface p-4 space-y-2 shadow-2xs relative overflow-hidden">
-                            <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-xs text-foreground">Migration Window (2026–2029)</span>
-                              <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-amber-400">
-                                TRANSITION
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-quiet leading-relaxed">
-                              Deploy NIST-standardized Post-Quantum algorithms: FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA).
-                            </p>
-                            <div className="pt-2 border-t border-subtle text-[10px] font-mono text-amber-400">
-                              Target: Hybrid dual-mode deployment
-                            </div>
-                          </div>
-
-                          {/* Card 3: Quantum Resilient */}
-                          <div className="rounded-lg border border-cyan-500/30 bg-surface p-4 space-y-2 shadow-2xs relative overflow-hidden">
-                            <div className="absolute top-0 left-0 right-0 h-1 bg-cyan-500" />
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-xs text-foreground">Quantum Resilient (2030+)</span>
-                              <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-teal">
-                                PROJECTED CRQC
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-quiet leading-relaxed">
-                              Estimated Cryptanalytically Relevant Quantum Computer arrival. Classical asymmetric primitives completely compromised.
-                            </p>
-                            <div className="pt-2 border-t border-subtle text-[10px] font-mono text-teal">
-                              Target: 100% Post-Quantum Cryptography required
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* ─── 4. DETAILED EVIDENCE ACCORDION ─── */}
-                      <div className="pt-2 border-t border-subtle">
-                        <details className="group" open={activeTab === "evidence"}>
-                          <summary className="cursor-pointer list-none flex items-center justify-between py-2 text-xs font-semibold text-foreground hover:text-teal transition-colors">
-                            <span className="flex items-center gap-2">
-                              <FileText size={14} className="text-teal" />
-                              Detailed Technical Evidence &amp; Dissections
-                            </span>
-                            <span className="text-[10px] text-quiet group-open:rotate-180 transition-transform">▼</span>
-                          </summary>
-                          <div className="pt-3 space-y-4">
-                            {/* 1. NETWORK SPECIFIC EVIDENCE */}
-                            {mode === "network" && (
-                              <div className="space-y-4">
-                                {/* TLS Observation Grid */}
+                {/* COMPLETED FINDINGS */}
+                {activeScan.status === "completed" && activeScan.result && (
+                  <div className="space-y-5">
+                    {/* 1. NETWORK SPECIFIC EVIDENCE */}
+                    {mode === "network" && (
+                      <div className="space-y-4">
+                        {/* TLS Observation Grid */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                           <div className="rounded border border-subtle bg-canvas/50 p-2.5 text-center">
                             <span className="text-[10px] uppercase tracking-wider text-quiet">
@@ -1197,12 +875,8 @@ export function FeatureScanHistory({
                         )}
                       </pre>
                     </details>
-                          </div>
-                        </details>
-                      </div>
-                    </div>
-                  );
-                })()}
+                  </div>
+                )}
               </>
             )}
           </div>

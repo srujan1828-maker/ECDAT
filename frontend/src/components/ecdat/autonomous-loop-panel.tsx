@@ -97,7 +97,7 @@ export function AutonomousLoopPanel({
   const [targetType, setTargetType] = useState<"source" | "binary">("source");
   const [selectedScenario, setSelectedScenario] = useState(PRESET_SCENARIOS[0]);
   const [sourceCode, setSourceCode] = useState(PRESET_SCENARIOS[0].code);
-  const [mode, setMode] = useState<"snippet" | "codebase">("snippet");
+  const [mode, setMode] = useState<"snippet" | "codebase">("codebase");
   
   // Multi-file / Full codebase state
   const [codebaseFiles, setCodebaseFiles] = useState<Array<{ path: string; content: string }>>([]);
