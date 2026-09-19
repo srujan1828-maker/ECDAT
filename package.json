@@ -5,6 +5,8 @@
   "description": "Enterprise Cryptographic Discovery & Agility Toolkit (ECDAT)",
   "scripts": {
     "demo:servers": "node demo_servers/run_all.js",
+    "demo:deploy": "node demo_servers/tunnel_deploy.js",
+    "demo:docker": "docker compose -f demo_servers/docker-compose.yml up -d --build",
     "frontend:dev": "npm --prefix frontend run dev",
     "frontend:build": "npm --prefix frontend run build"
   }

@@ -5,6 +5,8 @@
   "main": "run_all.js",
   "scripts": {
     "start": "node run_all.js",
+    "deploy": "node tunnel_deploy.js",
+    "docker": "docker compose up -d --build",
     "apex": "node website1_apex_pay/server.js",
     "med": "node website2_med_vault/server.js",
     "cipher": "node website3_cipher_cloud/server.js"

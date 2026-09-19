@@ -462,6 +462,6 @@ const server = http.createServer((req, res) => {
   res.end('Not Found');
 });
 
-server.listen(PORT, () => {
-  console.log(`[MedVault Node.js] Server listening on http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[MedVault Node.js] Server listening on http://0.0.0.0:${PORT} (http://localhost:${PORT})`);
 });
