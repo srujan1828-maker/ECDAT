@@ -1,0 +1,11 @@
+{
+  "name": "ecdat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Enterprise Cryptographic Discovery & Agility Toolkit (ECDAT)",
+  "scripts": {
+    "demo:servers": "node demo_servers/run_all.js",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build"
+  }
+}

@@ -55,8 +55,27 @@ async function forward(
     const contentType = upstream.headers.get('content-type') || '';
     if (!upstream.ok && !contentType.includes('application/json')) {
       const rawText = await upstream.text();
+      let cleanDetail = rawText;
+      if (/<title>Blocked<\/title>/i.test(rawText) || /cloudflare/i.test(rawText)) {
+        const rayMatch = rawText.match(/Ray ID:\s*<code[^>]*>([a-f0-9]+)<\/code>|data-ray="([a-f0-9]+)"/i);
+        const rayId = rayMatch ? (rayMatch[1] || rayMatch[2]) : '';
+        cleanDetail = `Security Firewall Block (HTTP 403): Cloudflare WAF or network policy blocked the request${rayId ? ` (Ray ID: ${rayId})` : ''}. ` +
+          `Scanning unencoded source code through Cloudflare tunnels triggers WAF rules. Payload encoding has been enabled, or you can access the dashboard directly at http://localhost:3000.`;
+      } else if (/<[a-z][\s\S]*>/i.test(rawText)) {
+        const titleMatch = rawText.match(/<title[^>]*>([^<]+)<\/title>/i);
+        const title = titleMatch ? titleMatch[1].trim() : 'Upstream Error';
+        const stripped = rawText
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 300);
+        cleanDetail = `${title} (HTTP ${upstream.status}): ${stripped}`;
+      }
       return Response.json(
-        { detail: rawText || `Upstream returned HTTP ${upstream.status} ${upstream.statusText}` },
+        { detail: cleanDetail || `Upstream returned HTTP ${upstream.status} ${upstream.statusText}` },
         { status: upstream.status }
       );
     }

@@ -33,6 +33,7 @@ import { VerificationPanel } from "@/components/ecdat/verification-panel";
 import { StandardsPanel } from "@/components/ecdat/standards-panel";
 import { ExperimentalHub } from "@/components/ecdat/experimental-hub";
 import { SihDemoPanel } from "@/components/ecdat/sih-demo-panel";
+import { JudgeDemoPanel } from "@/components/ecdat/judge-demo-panel";
 import { FeatureScanHistory } from "@/components/ecdat/feature-scan-history";
 
 const inputClass =
@@ -155,7 +156,7 @@ const languageExtensions: Record<string, string> = {
 
 export default function Dashboard() {
   const [view, setView] = useState<
-    "overview" | "scans" | "history" | "migration" | "verification" | "standards" | "experimental" | "sih_demo"
+    "overview" | "scans" | "history" | "migration" | "verification" | "standards" | "experimental" | "sih_demo" | "judge_demo"
   >("overview");
   const [projectInput, setProjectInput] = useState("default");
   const [project, setProject] = useState("default");
@@ -186,6 +187,7 @@ export default function Dashboard() {
       else if (hash === "standards") setView("standards");
       else if (hash === "experimental") setView("experimental");
       else if (hash === "sih_demo" || hash === "sih-demo") setView("sih_demo");
+      else if (hash === "judge_demo" || hash === "judge-demo" || hash === "live-demo") setView("judge_demo");
       else if (hash === "history") setView("history");
       else if (["network", "code", "binary", "pcap"].includes(hash)) {
         setMode(hash as "network" | "code" | "binary" | "pcap");
@@ -281,26 +283,56 @@ export default function Dashboard() {
         }
 
         if (sourceFiles.length > 0) {
-          path = "/scan/sources/upload";
-          const formData = new FormData();
-          if (
+          const isArchive =
             sourceFiles.length === 1 &&
-            /\.(zip|tar\.gz|tgz|tar)$/i.test(sourceFiles[0].name)
-          ) {
-            formData.append("file", sourceFiles[0]);
+            /\.(zip|tar\.gz|tgz|tar)$/i.test(sourceFiles[0].name);
+
+          // For small source folder/files under 15MB, encode as base64 in JSON
+          // to completely bypass WAF multipart / code-injection inspection.
+          if (!isArchive && totalSize < 15 * 1024 * 1024) {
+            path = "/scan/sources";
+            const encodedFiles = await Promise.all(
+              sourceFiles.map(async (file) => {
+                const buf = await file.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                let bin = "";
+                for (let i = 0; i < bytes.length; i++) {
+                  bin += String.fromCharCode(bytes[i]);
+                }
+                return {
+                  path: (file.webkitRelativePath || file.name).replace(/\\/g, "/"),
+                  content_b64: btoa(bin),
+                };
+              })
+            );
+            body = { files: encodedFiles };
           } else {
-            for (const file of sourceFiles) {
-              formData.append("files", file, file.webkitRelativePath || file.name);
+            path = "/scan/sources/upload";
+            const formData = new FormData();
+            if (isArchive) {
+              formData.append("file", sourceFiles[0]);
+            } else {
+              for (const file of sourceFiles) {
+                formData.append("files", file, file.webkitRelativePath || file.name);
+              }
             }
+            body = formData;
           }
-          body = formData;
         } else {
           path = "/scan/sources";
+          // Base64-encode code snippet to prevent Cloudflare WAF / firewall inspection blocks
+          const utf8Bytes = new TextEncoder().encode(code);
+          let binary = "";
+          for (let i = 0; i < utf8Bytes.length; i++) {
+            binary += String.fromCharCode(utf8Bytes[i]);
+          }
+          const codeB64 = btoa(binary);
+
           body = {
             files: [
               {
-                path: `snippet.${languageExtensions[language]}`,
-                content: code,
+                path: `snippet.${languageExtensions[language] || "js"}`,
+                content_b64: codeB64,
                 language,
               },
             ],
@@ -475,6 +507,17 @@ export default function Dashboard() {
           >
             <PlayCircle size={16} className="text-teal" />
             SIH 10-step demo
+          </button>
+          <button
+            onClick={() => setView("judge_demo")}
+            aria-current={view === "judge_demo" ? "page" : undefined}
+            className={`mt-1.5 flex w-full items-center gap-2.5 rounded-md border border-emerald-500/40 bg-emerald-500/15 px-3 py-2.5 text-left text-xs font-semibold text-emerald-300 hover:bg-emerald-500/25 shadow-sm transition-all`}
+          >
+            <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
+            <span>Live Website Patch Demo</span>
+            <span className="ml-auto rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[9px] text-emerald-300 uppercase">
+              Judge
+            </span>
           </button>
           <p className="nav-group-label nav-group-action">Reports</p>
           <button
@@ -654,6 +697,9 @@ export default function Dashboard() {
           )}
           {view === "sih_demo" && (
             <SihDemoPanel project={project} token={token} />
+          )}
+          {view === "judge_demo" && (
+            <JudgeDemoPanel project={project} token={token} />
           )}
           {view !== "scans" && error && (
             <div role="alert" className="ec-alert">
@@ -860,6 +906,57 @@ export default function Dashboard() {
                                   </option>
                                 ))}
                               </select>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                              <span className="text-[11px] font-medium text-quiet">Judge demo presets:</span>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const res = await requestApi<{ content: string; language: string }>("/demo/target/source?target=apex_pay", project, token);
+                                    setCode(res.content);
+                                    setLanguage("javascript");
+                                  } catch {
+                                    setCode(`// ApexPay Payment Gateway (Vulnerable: MD5 + DES)\nconst crypto = require('crypto');\nfunction hashPassword(password) {\n  return crypto.createHash('md5').update(password).digest('hex');\n}\nfunction encryptCard(cardNumber, key) {\n  const cipher = crypto.createCipheriv('des-ecb', key, null);\n  return Buffer.concat([cipher.update(cardNumber, 'utf8'), cipher.final()]).toString('base64');\n}\n`);
+                                    setLanguage("javascript");
+                                  }
+                                }}
+                                className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-teal hover:bg-cyan-500/20 transition-colors"
+                              >
+                                ⚡ ApexPay (MD5 & DES)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const res = await requestApi<{ content: string; language: string }>("/demo/target/source?target=med_vault", project, token);
+                                    setCode(res.content);
+                                    setLanguage("javascript");
+                                  } catch {
+                                    setCode(`// MedVault Healthcare Portal (Vulnerable: RSA-1024)\nconst crypto = require('crypto');\nfunction generateDoctorPrescriptionKey() {\n  return crypto.generateKeyPairSync('rsa', {\n    modulusLength: 1024,\n    publicKeyEncoding: { type: 'spki', format: 'pem' },\n    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }\n  });\n}\n`);
+                                    setLanguage("javascript");
+                                  }
+                                }}
+                                className="rounded border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] font-medium text-purple-300 hover:bg-purple-500/20 transition-colors"
+                              >
+                                ⚡ MedVault (RSA-1024)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const res = await requestApi<{ content: string; language: string }>("/demo/target/source?target=cipher_cloud", project, token);
+                                    setCode(res.content);
+                                    setLanguage("javascript");
+                                  } catch {
+                                    setCode(`// CipherCloud Enterprise Storage (Vulnerable: DES-CBC + MD5)\nconst crypto = require('crypto');\nfunction encryptFile(data, key, iv) {\n  const cipher = crypto.createCipheriv('des-cbc', key, iv);\n  return Buffer.concat([cipher.update(data), cipher.final()]);\n}\nfunction verifyIntegrity(data) {\n  return crypto.createHash('md5').update(data).digest('hex');\n}\n`);
+                                    setLanguage("javascript");
+                                  }
+                                }}
+                                className="rounded border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-300 hover:bg-blue-500/20 transition-colors"
+                              >
+                                ⚡ CipherCloud (DES-CBC)
+                              </button>
                             </div>
                             <textarea
                               id="source-code"

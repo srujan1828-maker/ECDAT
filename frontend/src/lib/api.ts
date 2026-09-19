@@ -216,6 +216,17 @@ export type MigrationPatch = {
   };
 };
 
+export type ApplyPatchResponse = {
+  status: string;
+  file_path: string;
+  relative_path: string;
+  backup_created: boolean;
+  backup_path?: string;
+  bytes_written: number;
+  remaining_findings_count: number;
+  weakness_eliminated: boolean;
+};
+
 export type CustomCryptoFinding = {
   file_path: string;
   line_number: number;
@@ -268,6 +279,30 @@ export type SihDemoExecution = {
   runtime_trace_summary: Record<string, unknown>;
 };
 
+export function cleanErrorMessage(raw: string, status?: number): string {
+  if (!raw) return `HTTP ${status || "Error"}`;
+  if (/<[a-z][\s\S]*>/i.test(raw)) {
+    if (/<title>Blocked<\/title>/i.test(raw) || /Ray ID:/i.test(raw) || /Cloudflare/i.test(raw)) {
+      const rayMatch = raw.match(/Ray ID:\s*<code[^>]*>([a-f0-9]+)<\/code>|data-ray="([a-f0-9]+)"/i);
+      const rayId = rayMatch ? (rayMatch[1] || rayMatch[2]) : "";
+      return `Security Firewall Block (HTTP 403): Cloudflare WAF or network policy blocked the request${rayId ? ` (Ray ID: ${rayId})` : ''}. ` +
+        `Scanning unencoded source code through Cloudflare tunnels triggers WAF rules. Payload encoding has been enabled, or you can access the dashboard directly at http://localhost:3000.`;
+    }
+    const titleMatch = raw.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : "HTTP Error";
+    const stripped = raw
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<svg[\s\S]*?<\/svg>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 300);
+    return `${title} (${status ? `HTTP ${status}` : "Error"}): ${stripped}`;
+  }
+  return raw;
+}
+
 export async function requestApi<T>(
   path: string,
   project: string,
@@ -300,14 +335,12 @@ export async function requestApi<T>(
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    data = { detail: text || `HTTP ${response.status} ${response.statusText}` };
+    data = { detail: cleanErrorMessage(text, response.status) };
   }
 
-  if (!response.ok)
-    throw new Error(
-      typeof data.detail === "string"
-        ? data.detail
-        : JSON.stringify(data.detail || data),
-    );
+  if (!response.ok) {
+    const rawDetail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
+    throw new Error(cleanErrorMessage(rawDetail, response.status));
+  }
   return data;
 }

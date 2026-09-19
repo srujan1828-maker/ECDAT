@@ -20,6 +20,9 @@ import {
   Copy,
   Check,
   ShieldCheck,
+  Download,
+  Save,
+  FileCheck,
 } from "lucide-react";
 import {
   requestApi,
@@ -27,6 +30,7 @@ import {
   BenchmarkMetrics,
   CustomCryptoFinding,
   MigrationPatch,
+  ApplyPatchResponse,
 } from "@/lib/api";
 
 interface ExperimentalHubProps {
@@ -58,8 +62,12 @@ export function ExperimentalHub({ project, token }: ExperimentalHubProps) {
   const [patchSource, setPatchSource] = useState(
     `import hashlib\ndef process_login(password: str):\n    # Weak legacy MD5 hash\n    token = hashlib.md5(password.encode()).hexdigest()\n    return token`
   );
+  const [patchFilePath, setPatchFilePath] = useState("auth.py");
   const [generatedPatch, setGeneratedPatch] = useState<MigrationPatch | null>(null);
   const [loadingPatch, setLoadingPatch] = useState(false);
+  const [applyStatus, setApplyStatus] = useState<ApplyPatchResponse | null>(null);
+  const [loadingApply, setLoadingApply] = useState(false);
+  const [copiedDiff, setCopiedDiff] = useState(false);
 
   // Runtime / eBPF State
   const [runtimeResult, setRuntimeResult] = useState<any | null>(null);
@@ -134,12 +142,18 @@ export function ExperimentalHub({ project, token }: ExperimentalHubProps) {
 
   async function handleGeneratePatch() {
     setLoadingPatch(true);
+    setApplyStatus(null);
     try {
       const res = await requestApi<MigrationPatch>(
         "/experimental/autopatch",
         project,
         token,
-        { source_code: patchSource, file_path: "auth.py", language: "python", run_tests: true }
+        {
+          source_code: patchSource,
+          file_path: patchFilePath || "auth.py",
+          language: "python",
+          run_tests: true,
+        }
       );
       setGeneratedPatch(res);
     } catch (err: any) {
@@ -147,6 +161,50 @@ export function ExperimentalHub({ project, token }: ExperimentalHubProps) {
     } finally {
       setLoadingPatch(false);
     }
+  }
+
+  async function handleApplyPatch() {
+    if (!generatedPatch) return;
+    setLoadingApply(true);
+    try {
+      const res = await requestApi<ApplyPatchResponse>(
+        "/experimental/autopatch/apply",
+        project,
+        token,
+        {
+          file_path: patchFilePath || "auth.py",
+          patched_code: generatedPatch.patched_code,
+          backup: true,
+        }
+      );
+      setApplyStatus(res);
+    } catch (err: any) {
+      alert(err.message || "Failed to apply patch.");
+    } finally {
+      setLoadingApply(false);
+    }
+  }
+
+  function handleDownloadPatch() {
+    if (!generatedPatch?.unified_diff) return;
+    const blob = new Blob([generatedPatch.unified_diff], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(patchFilePath || "app.py").replace(/[^a-zA-Z0-9_.-]/g, "_")}.patch`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleCopyDiff() {
+    if (!generatedPatch?.unified_diff) return;
+    navigator.clipboard.writeText(generatedPatch.unified_diff);
+    setCopiedDiff(true);
+    setTimeout(() => setCopiedDiff(false), 2000);
   }
 
   async function handleRunRuntimeTrace() {
@@ -513,7 +571,7 @@ export function ExperimentalHub({ project, token }: ExperimentalHubProps) {
             </h3>
             <p className="text-sm text-quiet">
               Generates safe, template-driven transformations (e.g. MD5 → SHA-256, RSA-1024 →
-              RSA-3072/ML-KEM), produces unified git diffs, and executes differential regression tests.
+              RSA-3072/ML-KEM), produces unified git diffs, executes differential regression tests, and applies patches directly in-place with automatic safety backups.
             </p>
 
             <textarea
@@ -523,27 +581,94 @@ export function ExperimentalHub({ project, token }: ExperimentalHubProps) {
               className="w-full rounded-md border border-subtle bg-canvas p-3 text-xs font-mono text-foreground"
             />
 
-            <button
-              onClick={handleGeneratePatch}
-              disabled={loadingPatch}
-              className="ec-button flex items-center gap-2"
-            >
-              {loadingPatch ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
-              Generate Patch & Execute Regression Test
-            </button>
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+              <div className="flex-1 w-full">
+                <label className="block text-[11px] font-semibold text-quiet uppercase tracking-wider mb-1">
+                  Target File Path (for diff & in-place patch application)
+                </label>
+                <input
+                  type="text"
+                  value={patchFilePath}
+                  onChange={(e) => setPatchFilePath(e.target.value)}
+                  placeholder="e.g. auth.py or src/crypto.py"
+                  className="w-full rounded-md border border-subtle bg-canvas px-3 py-1.5 text-xs font-mono text-foreground"
+                />
+              </div>
+              <div className="self-end pt-1">
+                <button
+                  onClick={handleGeneratePatch}
+                  disabled={loadingPatch}
+                  className="ec-button flex items-center gap-2"
+                >
+                  {loadingPatch ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
+                  Generate Patch & Execute Test
+                </button>
+              </div>
+            </div>
           </div>
 
           {generatedPatch && (
             <div className="rounded-lg border border-subtle bg-surface p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-subtle pb-3">
-                <span className="text-sm font-bold text-foreground flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-subtle pb-3">
+                <div className="flex items-center gap-2">
                   <CheckCircle2 size={16} className="text-emerald-400" />
-                  Pattern: {generatedPatch.pattern_id}
-                </span>
-                <span className="text-xs px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium">
-                  Test Status: {generatedPatch.verification_status}
-                </span>
+                  <span className="text-sm font-bold text-foreground">
+                    Pattern: {generatedPatch.pattern_id}
+                  </span>
+                  <span className="text-xs px-2.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium">
+                    Test: {generatedPatch.verification_status}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleCopyDiff}
+                    className="inline-flex items-center gap-1.5 rounded border border-subtle bg-canvas px-2.5 py-1 text-xs text-foreground hover:bg-surface transition-colors"
+                    title="Copy unified diff to clipboard"
+                  >
+                    {copiedDiff ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                    <span>{copiedDiff ? "Copied Diff" : "Copy Diff"}</span>
+                  </button>
+
+                  <button
+                    onClick={handleDownloadPatch}
+                    className="inline-flex items-center gap-1.5 rounded border border-subtle bg-canvas px-2.5 py-1 text-xs text-foreground hover:bg-surface transition-colors"
+                    title="Download .patch file"
+                  >
+                    <Download size={14} />
+                    <span>Download .patch</span>
+                  </button>
+
+                  <button
+                    onClick={handleApplyPatch}
+                    disabled={loadingApply}
+                    className="inline-flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                    title="Apply patch directly to the target file on disk (creates .bak backup)"
+                  >
+                    {loadingApply ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
+                    <span>Apply Directly to File</span>
+                  </button>
+                </div>
               </div>
+
+              {applyStatus && (
+                <div className="rounded border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs space-y-1">
+                  <div className="flex items-center gap-2 font-semibold text-emerald-300">
+                    <CheckCircle2 size={15} />
+                    <span>Patch successfully written to {applyStatus.relative_path || applyStatus.file_path}!</span>
+                  </div>
+                  {applyStatus.backup_created && (
+                    <div className="text-[11px] text-emerald-400/80 font-mono">
+                      Safety backup created: {applyStatus.backup_path}
+                    </div>
+                  )}
+                  {applyStatus.weakness_eliminated && (
+                    <div className="text-[11px] text-emerald-400/90 font-medium">
+                      ✓ In-memory re-scan verified: 0 cryptographic weaknesses remain in file.
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <span className="text-xs font-semibold text-quiet uppercase tracking-wider mb-1 block">

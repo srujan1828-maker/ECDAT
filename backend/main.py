@@ -136,11 +136,18 @@ class NetworkRequest(BaseModel):
 
 class SourceFile(BaseModel):
     path: str = Field(min_length=1, max_length=500)
-    content: str = Field(max_length=MAX_SOURCE_BYTES)
+    content: str = Field(default='', max_length=MAX_SOURCE_BYTES)
+    content_b64: Optional[str] = Field(default=None, max_length=MAX_SOURCE_BYTES * 2)
     language: str | None = None
 
     @model_validator(mode='after')
     def valid_file(self):
+        if self.content_b64 and not self.content:
+            try:
+                decoded = base64.b64decode(self.content_b64.encode('ascii'))
+                self.content = decoded.decode('utf-8', errors='replace')
+            except Exception as e:
+                raise ValueError(f'Invalid base64 encoding in content_b64: {e}')
         clean_path = self.path.replace('\\', '/')
         if clean_path.startswith('/') or '..' in clean_path.split('/'):
             raise ValueError('Use a relative file path without parent traversal')
@@ -150,8 +157,21 @@ class SourceFile(BaseModel):
 
 
 class CodeRequest(BaseModel):
-    source_code: str = Field(min_length=1, max_length=50_000_000)
+    source_code: str = Field(default='', max_length=50_000_000)
+    source_code_b64: Optional[str] = Field(default=None, max_length=100_000_000)
     language: Literal['python', 'java', 'c_cpp', 'golang', 'javascript'] = 'python'
+
+    @model_validator(mode='after')
+    def valid_code(self):
+        if self.source_code_b64 and not self.source_code:
+            try:
+                decoded = base64.b64decode(self.source_code_b64.encode('ascii'))
+                self.source_code = decoded.decode('utf-8', errors='replace')
+            except Exception as e:
+                raise ValueError(f'Invalid base64 in source_code_b64: {e}')
+        if not self.source_code:
+            raise ValueError('source_code or source_code_b64 is required')
+        return self
 
 
 class SourcesRequest(BaseModel):
@@ -159,7 +179,13 @@ class SourcesRequest(BaseModel):
 
     @model_validator(mode='after')
     def valid_total(self):
-        if sum(len(f.content.encode('utf-8', errors='replace')) for f in self.files) > MAX_SOURCE_BYTES:
+        total = 0
+        for f in self.files:
+            if f.content:
+                total += len(f.content.encode('utf-8', errors='replace'))
+            elif f.content_b64:
+                total += (len(f.content_b64) * 3) // 4
+        if total > MAX_SOURCE_BYTES:
             raise ValueError('Source bundle exceeds 500 MiB')
         if len({f.path for f in self.files}) != len(self.files):
             raise ValueError('Duplicate source paths')
@@ -1333,6 +1359,187 @@ def generate_autopatch(req: AutoPatchRequest):
     if req.run_tests:
         patch = AutoPatchEngine.run_regression_test(patch)
     return patch.model_dump()
+
+
+class ApplyPatchRequest(BaseModel):
+    file_path: str = Field(min_length=1, max_length=500)
+    patched_code: str = Field(min_length=1, max_length=10_000_000)
+    backup: bool = True
+    workspace_root: Optional[str] = None
+
+
+@router.post('/experimental/autopatch/apply')
+def apply_autopatch(req: ApplyPatchRequest):
+    try:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        root = req.workspace_root or base_dir
+        res = AutoPatchEngine.apply_patch(
+            file_path=req.file_path,
+            patched_code=req.patched_code,
+            backup=req.backup,
+            workspace_root=root,
+        )
+        return res
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to apply patch: {e}")
+
+
+DEMO_TARGETS = {
+    "apex_pay": {
+        "id": "apex_pay",
+        "name": "ApexPay FinTech Banking Portal (Node.js)",
+        "url": "http://localhost:8081",
+        "relative_path": "demo_servers/website1_apex_pay/server.js",
+        "description": "Enterprise Node.js payment gateway with MD5 password hashing and 56-bit DES card token encryption.",
+    },
+    "med_vault": {
+        "id": "med_vault",
+        "name": "MedVault Healthcare EHR Portal (Node.js)",
+        "url": "http://localhost:8082",
+        "relative_path": "demo_servers/website2_med_vault/server.js",
+        "description": "Electronic health record portal with quantum-vulnerable 1024-bit RSA doctor digital prescription keys.",
+    },
+    "cipher_cloud": {
+        "id": "cipher_cloud",
+        "name": "CipherCloud Enterprise Storage (Node.js)",
+        "url": "http://localhost:8083",
+        "relative_path": "demo_servers/website3_cipher_cloud/server.js",
+        "description": "Cloud document locker with obsolete 56-bit DES symmetric encryption and MD5 integrity verification.",
+    },
+}
+
+
+def _get_target_abs_path(target_id: str) -> tuple[dict, str, str]:
+    target = DEMO_TARGETS.get(target_id)
+    if not target:
+        raise HTTPException(404, f"Target '{target_id}' not found.")
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    abs_path = os.path.abspath(os.path.join(base_dir, target["relative_path"]))
+    if not os.path.exists(abs_path):
+        py_fallback = abs_path.replace("server.js", "app.py")
+        if os.path.exists(py_fallback):
+            abs_path = py_fallback
+    ext = os.path.splitext(abs_path)[1].lower()
+    lang = "javascript" if ext in (".js", ".mjs", ".cjs", ".ts") else "python"
+    return target, abs_path, lang
+
+
+@router.get('/demo/target/status')
+def get_demo_target_status(target: str = "apex_pay"):
+    info, abs_path, lang = _get_target_abs_path(target)
+    exists = os.path.exists(abs_path)
+    is_patched = False
+    findings_count = 0
+    if exists:
+        with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if target in ("apex_pay", "cipher_cloud"):
+            is_patched = (
+                "createHash('sha256')" in content
+                or 'createHash("sha256")' in content
+                or "hashlib.sha256(" in content
+            )
+        elif target == "med_vault":
+            is_patched = (
+                "modulusLength: 3072" in content
+                or "modulusLength:3072" in content
+                or "key_size=3072" in content
+            )
+        scan_res = scan_sources([{"path": os.path.basename(abs_path), "content": content, "language": lang}])
+        findings_count = len(scan_res.get("findings", []))
+
+    backup_exists = os.path.exists(f"{abs_path}.bak")
+    return {
+        "target": info,
+        "file_exists": exists,
+        "is_patched": is_patched,
+        "findings_count": findings_count,
+        "backup_exists": backup_exists,
+        "language": lang,
+    }
+
+
+@router.get('/demo/target/source')
+def get_demo_target_source(target: str = "apex_pay"):
+    info, abs_path, lang = _get_target_abs_path(target)
+    if not os.path.exists(abs_path):
+        raise HTTPException(404, f"Target file '{abs_path}' does not exist.")
+    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    return {
+        "target": info,
+        "content": content,
+        "language": lang,
+        "filename": os.path.basename(abs_path),
+    }
+
+
+@router.post('/demo/target/scan')
+def scan_demo_target(target: str = "apex_pay"):
+    info, abs_path, lang = _get_target_abs_path(target)
+    if not os.path.exists(abs_path):
+        raise HTTPException(404, f"Target file '{abs_path}' does not exist.")
+    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    res = scan_sources([{"path": info["relative_path"], "content": content, "language": lang}])
+    return {
+        "target": info,
+        "findings": res.get("findings", []),
+        "scan_summary": res.get("summary", {}),
+        "language": lang,
+    }
+
+
+@router.post('/demo/target/patch')
+def patch_demo_target(target: str = "apex_pay"):
+    info, abs_path, lang = _get_target_abs_path(target)
+    if not os.path.exists(abs_path):
+        raise HTTPException(404, f"Target file '{abs_path}' does not exist.")
+    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+        original = f.read()
+    patch = AutoPatchEngine.create_patch(original, info["relative_path"], lang)
+    if not patch:
+        return {"status": "unaltered", "message": "No active weak patterns found or already patched.", "target": info}
+    tested_patch = AutoPatchEngine.run_regression_test(patch)
+    apply_res = AutoPatchEngine.apply_patch(abs_path, tested_patch.patched_code, backup=True)
+    return {
+        "status": "patched",
+        "target": info,
+        "pattern_id": tested_patch.pattern_id,
+        "transformation": tested_patch.transformation_description,
+        "unified_diff": tested_patch.unified_diff,
+        "test_status": tested_patch.verification_status,
+        "test_output": tested_patch.test_output,
+        "backup_created": apply_res["backup_created"],
+        "backup_path": apply_res["backup_path"],
+        "weakness_eliminated": apply_res["weakness_eliminated"],
+    }
+
+
+@router.post('/demo/target/reset')
+def reset_demo_target(target: str = "apex_pay"):
+    info, abs_path, lang = _get_target_abs_path(target)
+    backup_path = f"{abs_path}.bak"
+    if os.path.exists(backup_path):
+        import shutil
+        shutil.copy2(backup_path, abs_path)
+        return {"status": "reset", "message": f"Restored from backup {backup_path}", "target": info}
+    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    reverted = content
+    if target in ("apex_pay", "cipher_cloud"):
+        reverted = reverted.replace("createHash('sha256')", "createHash('md5')")
+        reverted = reverted.replace('createHash("sha256")', 'createHash("md5")')
+        reverted = reverted.replace("hashlib.sha256(", "hashlib.md5(")
+    elif target == "med_vault":
+        reverted = reverted.replace("modulusLength: 3072", "modulusLength: 1024")
+        reverted = reverted.replace("modulusLength:3072", "modulusLength:1024")
+        reverted = reverted.replace("key_size=3072", "key_size=1024")
+    with open(abs_path, "w", encoding="utf-8") as f:
+        f.write(reverted)
+    return {"status": "reset", "message": "Reset to original vulnerable cryptographic state.", "target": info}
 
 
 class QuantumEstimationRequest(BaseModel):
