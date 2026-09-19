@@ -291,7 +291,7 @@ export async function requestApi<T>(
         : body === undefined
           ? undefined
           : JSON.stringify(body),
-    signal: AbortSignal.timeout(35000),
+    signal: AbortSignal.timeout(300000),
     cache: "no-store",
   });
 

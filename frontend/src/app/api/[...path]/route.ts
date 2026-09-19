@@ -23,9 +23,9 @@ async function forward(
           const chunk = await reader.read();
           if (chunk.done) break;
           length += chunk.value.byteLength;
-          if (length > 18 * 1024 * 1024) {
+          if (length > 520 * 1024 * 1024) {
             await reader.cancel();
-            return Response.json({ detail: 'Request exceeds 18 MiB' }, { status: 413 });
+            return Response.json({ detail: 'Request exceeds 500 MiB' }, { status: 413 });
           }
           chunks.push(chunk.value);
         }
@@ -49,7 +49,7 @@ async function forward(
       headers,
       body: body as BodyInit | undefined,
       cache: 'no-store',
-      signal: AbortSignal.timeout(35000),
+      signal: AbortSignal.timeout(300000),
     });
 
     const contentType = upstream.headers.get('content-type') || '';

@@ -267,29 +267,45 @@ export default function Dashboard() {
         }
       } else {
 
-        path = "/scan/sources";
-        if (
-          sourceFiles.length > 100 ||
-          sourceFiles.reduce((sum, f) => sum + f.size, 0) > 8 * 1024 * 1024
-        )
-          throw new Error("Choose at most 100 source files totaling 8 MiB.");
-        const files = sourceFiles.length
-          ? await Promise.all(
-              sourceFiles.map(async (file) => ({
-                path: file.webkitRelativePath || file.name,
-                content: await file.text(),
-              })),
-            )
-          : [
+        if (!sourceFiles.length && !code.trim())
+          throw new Error("Paste code or choose source files.");
+
+        const MAX_SOURCE_BYTES = 500 * 1024 * 1024; // 500 MB
+        const MAX_SOURCE_FILES = 10000;
+        const totalSize = sourceFiles.reduce((sum, f) => sum + f.size, 0);
+
+        if (sourceFiles.length > MAX_SOURCE_FILES || totalSize > MAX_SOURCE_BYTES) {
+          throw new Error(
+            `Choose at most ${MAX_SOURCE_FILES.toLocaleString()} source files totaling 500 MB. (Selected: ${sourceFiles.length} files, ${(totalSize / (1024 * 1024)).toFixed(1)} MB)`
+          );
+        }
+
+        if (sourceFiles.length > 0) {
+          path = "/scan/sources/upload";
+          const formData = new FormData();
+          if (
+            sourceFiles.length === 1 &&
+            /\.(zip|tar\.gz|tgz|tar)$/i.test(sourceFiles[0].name)
+          ) {
+            formData.append("file", sourceFiles[0]);
+          } else {
+            for (const file of sourceFiles) {
+              formData.append("files", file, file.webkitRelativePath || file.name);
+            }
+          }
+          body = formData;
+        } else {
+          path = "/scan/sources";
+          body = {
+            files: [
               {
                 path: `snippet.${languageExtensions[language]}`,
                 content: code,
                 language,
               },
-            ];
-        if (!sourceFiles.length && !code.trim())
-          throw new Error("Paste code or choose source files.");
-        body = { files };
+            ],
+          };
+        }
       }
       const scan = await requestApi<Scan>(path, project, token, body);
       setSelected(scan.id);
@@ -808,7 +824,13 @@ export default function Dashboard() {
                         {sourceFiles.length > 0 ? (
                           <div className="flex items-center justify-between gap-2 rounded-md border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs text-teal">
                             <span>
-                              {sourceFiles.length} files ready to scan
+                              {sourceFiles.length}{" "}
+                              {sourceFiles.length === 1 ? "file" : "files"} (
+                              {(
+                                sourceFiles.reduce((sum, f) => sum + f.size, 0) /
+                                (1024 * 1024)
+                              ).toFixed(1)}{" "}
+                              MB / 500 MB limit) ready to scan
                             </span>
                             <button
                               className="text-quiet underline underline-offset-4"
@@ -851,8 +873,7 @@ export default function Dashboard() {
                           </>
                         )}
                         <p className="text-[11px] text-quiet">
-                          Up to 100 files · 8 MiB total. Unsupported files are
-                          listed in the results.
+                          Up to 10,000 files or ZIP archive · up to 500 MB total. Non-source files are safely filtered.
                         </p>
                       </>
                     )}

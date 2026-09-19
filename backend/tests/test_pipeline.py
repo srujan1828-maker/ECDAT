@@ -346,3 +346,50 @@ def test_plans_survive_restart(tmp_path):
     assert restarted.get_plan(plan['id'], 'a') == plan
     assert restarted.list_plans('b') == []
     restarted.close()
+
+
+def test_sources_upload_zip_and_large_capacity(client):
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w') as z:
+        z.writestr('app/main.py', 'from hashlib import md5\nmd5(b"test")\n')
+        z.writestr('src/crypto.c', 'DES_ecb_encrypt(input, output, ks, 1);\n')
+        z.writestr('ignored/node_modules/bad.js', 'crypto.createHash("md5");')
+        z.writestr('README.md', '# Documentation\n')
+
+    zip_bytes = archive.getvalue()
+    response = client.post('/api/scan/sources/upload?project=upload_proj',
+                           files={'file': ('source_repo.zip', zip_bytes, 'application/zip')})
+    assert response.status_code == 202
+    record = finish(client, response, 'upload_proj')
+    assert record['status'] == 'completed'
+    findings = record['result']['findings']
+    primitives = {f['primitive'] for f in findings}
+    assert 'MD5' in primitives
+    assert any('DES' in p for p in primitives)
+    # Ensure node_modules was ignored
+    assert not any('node_modules' in f.get('file', '') for f in findings)
+
+
+def test_sources_upload_multipart_files(client):
+    files = [
+        ('files', ('auth.py', 'from hashlib import sha1\nsha1(b"x")\n', 'text/x-python')),
+        ('files', ('crypto.py', 'from hashlib import md5\nmd5(b"y")\n', 'text/x-python')),
+    ]
+    response = client.post('/api/scan/sources/upload?project=multi_proj', files=files)
+    assert response.status_code == 202
+    record = finish(client, response, 'multi_proj')
+    assert record['status'] == 'completed'
+    assert len(record['result']['findings']) >= 2
+
+
+def test_sources_json_large_bundle_capacity(client):
+    filler = '# ' + ('A' * 78) + '\n'
+    large_comment = filler * 15000  # ~1.2 MB
+    py_code = large_comment + 'from hashlib import md5\nmd5(b"large")\n'
+    files = [{'path': f'module_{i}.py', 'content': py_code} for i in range(8)]
+    # Total size: ~9.6 MB > old 8 MiB limit
+    response = client.post('/api/scan/sources?project=large_proj', json={'files': files})
+    assert response.status_code == 202
+    record = finish(client, response, 'large_proj')
+    assert record['status'] == 'completed'
+    assert len(record['result']['findings']) == 8

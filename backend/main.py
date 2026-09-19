@@ -2,11 +2,14 @@ from contextlib import asynccontextmanager
 from datetime import date
 from fastapi.encoders import jsonable_encoder
 import base64
+import io
 import os
 import re
 import secrets
 import sys
+import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -45,7 +48,7 @@ from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, Upl
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from engine.scan_store import ScanStore
-from engine.source_scan import scan_sources, LANGUAGES
+from engine.source_scan import scan_sources, LANGUAGES, is_manifest_file
 from engine.binary_deep import scan_upload, MAX_BYTES
 from engine.website_inspector import scan_website
 from engine.migration_planner import build_plan
@@ -86,6 +89,24 @@ app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=Fals
                    allow_methods=['GET', 'POST'], allow_headers=['Content-Type', 'Authorization'])
 
 
+MAX_REQUEST_BYTES = 520 * 1024 * 1024  # 520 MiB request limit for large uploads
+MAX_SOURCE_BYTES = 500 * 1024 * 1024   # 500 MiB source file bundle limit
+MAX_SOURCE_FILES = 10000
+
+SOURCE_CODE_EXTENSIONS = {
+    '.py', '.c', '.cpp', '.h', '.hpp', '.cc', '.cxx', '.java', '.go',
+    '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.rs', '.rb', '.php',
+    '.cs', '.swift', '.kt', '.kts', '.scala', '.m', '.mm',
+    '.json', '.yaml', '.yml', '.toml', '.xml', '.sql', '.sh', '.bash',
+    '.txt', '.md', '.properties', '.env', '.ini', '.cfg', '.conf'
+}
+
+IGNORE_ARCHIVE_DIRS = {
+    'node_modules', '.git', '.svn', '.hg', '__pycache__', '.venv', 'venv',
+    '.idea', '.vscode', 'build', 'dist', 'target', '.next', '.cache'
+}
+
+
 @app.middleware('http')
 async def access_and_size(request: Request, call_next):
     from fastapi.responses import JSONResponse
@@ -98,8 +119,8 @@ async def access_and_size(request: Request, call_next):
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
-            if len(body) > 18 * 1024 * 1024:
-                return JSONResponse({'detail': 'Request exceeds 18 MiB'}, status_code=413)
+            if len(body) > MAX_REQUEST_BYTES:
+                return JSONResponse({'detail': 'Request exceeds 500 MiB'}, status_code=413)
         request._body = bytes(body)
     return await call_next(request)
 
@@ -114,13 +135,14 @@ class NetworkRequest(BaseModel):
 
 
 class SourceFile(BaseModel):
-    path: str = Field(min_length=1, max_length=300)
-    content: str = Field(max_length=500_000)
+    path: str = Field(min_length=1, max_length=500)
+    content: str = Field(max_length=MAX_SOURCE_BYTES)
     language: str | None = None
 
     @model_validator(mode='after')
     def valid_file(self):
-        if self.path.startswith('/') or '..' in self.path.replace('\\', '/').split('/'):
+        clean_path = self.path.replace('\\', '/')
+        if clean_path.startswith('/') or '..' in clean_path.split('/'):
             raise ValueError('Use a relative file path without parent traversal')
         if self.language is not None and self.language not in LANGUAGES:
             raise ValueError('Unsupported language')
@@ -128,17 +150,17 @@ class SourceFile(BaseModel):
 
 
 class CodeRequest(BaseModel):
-    source_code: str = Field(min_length=1, max_length=500_000)
+    source_code: str = Field(min_length=1, max_length=50_000_000)
     language: Literal['python', 'java', 'c_cpp', 'golang', 'javascript'] = 'python'
 
 
 class SourcesRequest(BaseModel):
-    files: list[SourceFile] = Field(min_length=1, max_length=100)
+    files: list[SourceFile] = Field(min_length=1, max_length=MAX_SOURCE_FILES)
 
     @model_validator(mode='after')
     def valid_total(self):
-        if sum(len(f.content.encode()) for f in self.files) > MAX_BYTES:
-            raise ValueError('Source bundle exceeds 8 MiB')
+        if sum(len(f.content.encode('utf-8', errors='replace')) for f in self.files) > MAX_SOURCE_BYTES:
+            raise ValueError('Source bundle exceeds 500 MiB')
         if len({f.path for f in self.files}) != len(self.files):
             raise ValueError('Duplicate source paths')
         return self
@@ -175,6 +197,125 @@ def code(req: CodeRequest, request: Request, project: str = Project):
 @router.post('/scan/sources', status_code=202)
 def sources(req: SourcesRequest, request: Request, project: str = Project):
     return enqueue(request, project, 'code', req.model_dump(), lambda p: scan_sources(p['files']))
+
+
+def extract_source_files_from_archive(raw: bytes, filename: str) -> list[dict]:
+    files = []
+    total_bytes = 0
+    fname = (filename or '').lower()
+    if fname.endswith('.zip'):
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            for entry in z.infolist():
+                if entry.is_dir():
+                    continue
+                clean_path = entry.filename.replace('\\', '/').lstrip('/')
+                parts = clean_path.split('/')
+                if any(p in ('..', '.') for p in parts) or any(p in IGNORE_ARCHIVE_DIRS or p.startswith('__MACOSX') for p in parts):
+                    continue
+                ext = Path(clean_path).suffix.lower()
+                if ext not in SOURCE_CODE_EXTENSIONS and not is_manifest_file(clean_path):
+                    continue
+                if entry.file_size > MAX_SOURCE_BYTES or (total_bytes + entry.file_size) > MAX_SOURCE_BYTES:
+                    raise ValueError('Unpacked source files exceed 500 MiB limit')
+                if len(files) >= MAX_SOURCE_FILES:
+                    break
+                with z.open(entry) as stream:
+                    content_bytes = stream.read(entry.file_size)
+                try:
+                    content_str = content_bytes.decode('utf-8-sig')
+                except UnicodeDecodeError:
+                    content_str = content_bytes.decode('latin-1', errors='replace')
+                total_bytes += len(content_bytes)
+                files.append({'path': clean_path, 'content': content_str})
+    elif any(fname.endswith(ext) for ext in ('.tar.gz', '.tgz', '.tar')):
+        mode = 'r:gz' if fname.endswith(('.tar.gz', '.tgz')) else 'r:'
+        with tarfile.open(fileobj=io.BytesIO(raw), mode=mode) as tar:
+            for member in tar.getmembers():
+                if not member.isfile():
+                    continue
+                clean_path = member.name.replace('\\', '/').lstrip('/')
+                parts = clean_path.split('/')
+                if any(p in ('..', '.') for p in parts) or any(p in IGNORE_ARCHIVE_DIRS or p.startswith('__MACOSX') for p in parts):
+                    continue
+                ext = Path(clean_path).suffix.lower()
+                if ext not in SOURCE_CODE_EXTENSIONS and not is_manifest_file(clean_path):
+                    continue
+                if member.size > MAX_SOURCE_BYTES or (total_bytes + member.size) > MAX_SOURCE_BYTES:
+                    raise ValueError('Unpacked source files exceed 500 MiB limit')
+                if len(files) >= MAX_SOURCE_FILES:
+                    break
+                f = tar.extractfile(member)
+                if f:
+                    content_bytes = f.read()
+                    try:
+                        content_str = content_bytes.decode('utf-8-sig')
+                    except UnicodeDecodeError:
+                        content_str = content_bytes.decode('latin-1', errors='replace')
+                    total_bytes += len(content_bytes)
+                    files.append({'path': clean_path, 'content': content_str})
+    else:
+        try:
+            content_str = raw.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            content_str = raw.decode('latin-1', errors='replace')
+        files.append({'path': Path(filename).name or 'source_file.txt', 'content': content_str})
+
+    if not files:
+        raise ValueError('No valid source code or manifest files found in upload')
+    return files
+
+
+@router.post('/scan/sources/upload', status_code=202)
+async def sources_upload(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    files: Optional[list[UploadFile]] = File(None),
+    project: str = Project
+):
+    upload_list = []
+    if files:
+        upload_list.extend(files)
+    if file:
+        upload_list.append(file)
+    if not upload_list:
+        raise HTTPException(422, 'Provide a source file, ZIP archive, or list of source files')
+
+    # If single archive (ZIP / TAR)
+    if len(upload_list) == 1 and any((upload_list[0].filename or '').lower().endswith(ext) for ext in ('.zip', '.tar.gz', '.tgz', '.tar')):
+        raw = await upload_list[0].read(MAX_SOURCE_BYTES + 1)
+        await upload_list[0].close()
+        if len(raw) > MAX_SOURCE_BYTES:
+            raise HTTPException(413, 'Upload exceeds 500 MiB')
+        try:
+            parsed_files = extract_source_files_from_archive(raw, upload_list[0].filename or 'archive.zip')
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        return enqueue(request, project, 'code', {'files': parsed_files}, lambda p: scan_sources(p['files']))
+
+    # Multiple or single uncompressed source files via multipart
+    total_size = 0
+    parsed_files = []
+    for f in upload_list:
+        if len(parsed_files) >= MAX_SOURCE_FILES:
+            break
+        raw = await f.read(MAX_SOURCE_BYTES + 1 - total_size)
+        await f.close()
+        total_size += len(raw)
+        if total_size > MAX_SOURCE_BYTES:
+            raise HTTPException(413, 'Total source files exceed 500 MiB')
+        clean_path = (f.filename or 'source.txt').replace('\\', '/').lstrip('/')
+        parts = clean_path.split('/')
+        if any(p in ('..', '.') for p in parts):
+            continue
+        try:
+            content_str = raw.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            content_str = raw.decode('latin-1', errors='replace')
+        parsed_files.append({'path': clean_path, 'content': content_str})
+
+    if not parsed_files:
+        raise HTTPException(422, 'No valid source files uploaded')
+    return enqueue(request, project, 'code', {'files': parsed_files}, lambda p: scan_sources(p['files']))
 
 
 def binary_worker(payload):
