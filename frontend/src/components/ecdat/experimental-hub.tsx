@@ -246,6 +246,10 @@ export function ExperimentalHub({ project, token }: ExperimentalHubProps) {
   async function handleUploadPcap(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size === 0 || file.size > 8 * 1024 * 1024) {
+      alert("Choose a PCAP file between 1 byte and 8 MiB.");
+      return;
+    }
     setLoadingPcap(true);
     try {
       const buffer = await file.arrayBuffer();

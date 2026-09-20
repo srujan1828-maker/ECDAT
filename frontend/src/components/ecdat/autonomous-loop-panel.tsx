@@ -27,7 +27,6 @@ import {
   Bot,
   ChevronDown,
   ChevronUp,
-  KeyRound,
   ExternalLink,
 } from "lucide-react";
 import {
@@ -135,9 +134,7 @@ export function AutonomousLoopPanel({
   const [githubToken, setGithubToken] = useState("");
   const [isPullingGithub, setIsPullingGithub] = useState(false);
 
-  // NVIDIA DeepSeek-R1 AI state
-  const [enableDeepSeek, setEnableDeepSeek] = useState(false);
-  const [nvidiaApiKey, setNvidiaApiKey] = useState("");
+  // NVIDIA NIM is configured server-side through NVIDIA_API_KEY.
   const [isAiRefactoring, setIsAiRefactoring] = useState(false);
   const [aiResult, setAiResult] = useState<AIRefactorResponse | null>(null);
   const [showReasoning, setShowReasoning] = useState(true);
@@ -201,7 +198,6 @@ export function AutonomousLoopPanel({
         file_path: curPath,
         source_code: curCode,
         language: curLang,
-        nvidia_api_key: nvidiaApiKey.trim() || undefined,
       });
 
       setAiResult(res);
@@ -210,7 +206,7 @@ export function AutonomousLoopPanel({
       }
       setStatusMessage(res.api_key_configured
         ? "NVIDIA DeepSeek-R1 post-quantum refactoring complete with extracted chain-of-thought."
-        : "NVIDIA API key not set. Retrieved NIST RAG standards and applied deterministic AST patch.");
+        : "NVIDIA_API_KEY is not configured on the backend; deterministic remediation was applied.");
     } catch (err) {
       setStatusMessage(`DeepSeek-R1 error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -677,64 +673,29 @@ export function AutonomousLoopPanel({
               </div>
             )}
 
-            {/* NVIDIA DeepSeek-R1 AI Assistant Card */}
-            <div className="mt-4 rounded-lg border border-purple-500/30 bg-purple-500/5 p-3.5 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles size={14} className="text-purple-400" />
-                  <span className="text-xs font-bold text-foreground">
-                    DeepSeek-R1 AI Refactor
-                  </span>
-                  <span className="rounded bg-purple-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-purple-300">
-                    NVIDIA NIM
-                  </span>
-                </div>
-                <label className="flex items-center gap-1.5 text-xs text-quiet cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={enableDeepSeek}
-                    onChange={(e) => setEnableDeepSeek(e.target.checked)}
-                    className="accent-purple-500"
-                  />
-                  <span>Active</span>
-                </label>
-              </div>
-
-              {enableDeepSeek && (
-                <div className="space-y-2 pt-2 border-t border-purple-500/20 text-xs">
-                  <div>
-                    <label className="block text-[10px] font-medium text-quiet">
-                      NVIDIA API Key:
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="nvapi-... (optional, leave empty for deterministic AST)"
-                      value={nvidiaApiKey}
-                      onChange={(e) => setNvidiaApiKey(e.target.value)}
-                      className="mt-1 w-full rounded border border-subtle bg-canvas px-2.5 py-1 text-xs font-mono text-foreground placeholder:text-quiet outline-none focus:border-purple-500"
-                    />
-                    <p className="mt-1 text-[10px] text-quiet">
-                      Retrieves NIST FIPS 203/204 RAG standards and invokes DeepSeek-R1 reasoning.
-                    </p>
+            {/* NVIDIA DeepSeek-R1 AI Assistant */}
+            <div className="mt-4 rounded-lg border border-purple-500/30 bg-purple-500/5 p-3.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-purple-400" />
+                    <span className="text-xs font-bold text-foreground">AI post-quantum refactor</span>
+                    <span className="rounded bg-purple-500/20 px-1.5 py-0.5 font-mono text-[9px] font-bold text-purple-300">NVIDIA NIM</span>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => runDeepSeekRefactor()}
-                    disabled={isAiRefactoring}
-                    className="w-full flex items-center justify-center gap-2 rounded bg-purple-600 hover:bg-purple-500 px-3 py-1.5 text-xs font-semibold text-white transition-all disabled:opacity-50"
-                  >
-                    {isAiRefactoring ? (
-                      <RefreshCw size={12} className="animate-spin" />
-                    ) : (
-                      <Sparkles size={12} />
-                    )}
-                    <span>
-                      {isAiRefactoring ? "Reasoning with DeepSeek-R1..." : "Run DeepSeek-R1 Refactor & Audit"}
-                    </span>
-                  </button>
+                  <p className="mt-1 text-[10px] leading-relaxed text-quiet">
+                    DeepSeek-R1 is always available through the backend&apos;s NVIDIA_API_KEY. No browser key or opt-in is required.
+                  </p>
                 </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => runDeepSeekRefactor()}
+                  disabled={isAiRefactoring}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded bg-purple-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-purple-500 disabled:opacity-50"
+                >
+                  {isAiRefactoring ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  {isAiRefactoring ? "Analyzing" : "Run AI"}
+                </button>
+              </div>
             </div>
 
             {/* Target Details Meta */}
@@ -750,7 +711,7 @@ export function AutonomousLoopPanel({
               <div className="flex justify-between">
                 <span>Engine:</span>
                 <span className="text-teal font-semibold">
-                  {enableDeepSeek ? "NVIDIA DeepSeek-R1 + RAG" : "Strict Deterministic AST"}
+                  NVIDIA DeepSeek-R1 + RAG
                 </span>
               </div>
             </div>
