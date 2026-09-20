@@ -405,6 +405,13 @@ def scan_result(scan_id: str, request: Request, project: str = Project):
     if record['status'] != 'completed':
         raise HTTPException(409, f"Scan is {record['status']}")
     result = dict(record.get('result') or {})
+    # Results are surface-specific.  Preserve the job metadata alongside the
+    # scanner payload so clients can select the correct renderer instead of
+    # treating a TLS observation as an empty source-code scan.
+    result.setdefault('scan_id', record['id'])
+    result.setdefault('kind', record['kind'])
+    result.setdefault('created_at', record['created_at'])
+    result.setdefault('finished_at', record['finished_at'])
     payload = request.app.state.store.get_payload(scan_id, project) or {}
     files = payload.get('files') or []
     if files:
