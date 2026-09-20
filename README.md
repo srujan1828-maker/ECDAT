@@ -305,3 +305,13 @@ npm run build
 ## 12. License
 
 This project is licensed under the Apache License 2.0. See [`LICENSE`](LICENSE) for details.
+
+### NVIDIA NIM configuration
+
+Configure the NVIDIA NIM key only in the backend environment—never in the browser:
+
+```bash
+export NVIDIA_API_KEY="nvapi-..."
+```
+
+When using Docker Compose, set `NVIDIA_API_KEY` in your shell or `.env` file before starting the stack. The AI refactoring endpoint reads this server-side variable directly.
