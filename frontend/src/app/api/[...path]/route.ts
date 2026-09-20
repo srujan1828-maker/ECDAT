@@ -80,12 +80,17 @@ async function forward(
       );
     }
 
+    const responseHeaders = new Headers({
+      'Content-Type': contentType || 'application/json',
+      'Cache-Control': 'no-store',
+    });
+    for (const name of ['content-disposition', 'content-length']) {
+      const value = upstream.headers.get(name);
+      if (value) responseHeaders.set(name, value);
+    }
     return new Response(upstream.body, {
       status: upstream.status,
-      headers: {
-        'Content-Type': contentType || 'application/json',
-        'Cache-Control': 'no-store',
-      },
+      headers: responseHeaders,
     });
   } catch (err: any) {
     return Response.json(

@@ -407,9 +407,46 @@ def scan_result(scan_id: str, request: Request, project: str = Project):
     result = dict(record.get('result') or {})
     payload = request.app.state.store.get_payload(scan_id, project) or {}
     files = payload.get('files') or []
+    if files:
+        result.setdefault('source_files', [
+            {'path': item.get('path', 'source.txt'), 'language': item.get('language')}
+            for item in files
+        ])
+        result.setdefault('source_file_count', len(files))
     if files and len(files) == 1:
         result.setdefault('source_code', files[0].get('content', ''))
     return result
+
+
+@router.get('/scans/{scan_id}/source-archive')
+def scan_source_archive(scan_id: str, request: Request, project: str = Project):
+    """Download the complete stored source tree for a scan as a ZIP archive."""
+    record = request.app.state.store.get(scan_id, project)
+    if record is None:
+        raise HTTPException(404, 'Scan not found')
+    payload = request.app.state.store.get_payload(scan_id, project) or {}
+    files = payload.get('files') or []
+    if not files:
+        raise HTTPException(422, 'This scan does not contain a source project')
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as output:
+        for item in files:
+            clean_path = str(item.get('path', 'source.txt')).replace('\\', '/').lstrip('/')
+            if not clean_path or '..' in clean_path.split('/'):
+                raise HTTPException(422, 'Stored source project contains an invalid path')
+            output.writestr(clean_path, str(item.get('content', '')).encode('utf-8', errors='replace'))
+        audit = payload.get('patch_audit')
+        if audit:
+            output.writestr('ECDAT_PATCH_AUDIT.json', json.dumps(audit, indent=2).encode())
+    body = archive.getvalue()
+    return Response(
+        content=body,
+        media_type='application/zip',
+        headers={
+            'Content-Disposition': f'attachment; filename="ecdat_patched_project_{scan_id[:8]}.zip"',
+            'Content-Length': str(len(body)),
+        },
+    )
 
 
 @router.post('/scans/{scan_id}/cancel')
@@ -2103,6 +2140,66 @@ def patch_from_scan(req: PatchFromScanRequest, request: Request):
         raise HTTPException(404, 'Completed source scan not found')
     payload = request.app.state.store.get_payload(req.scan_id, req.project_id) or {}
     files = payload.get('files') or []
+    if req.override_code is not None:
+        files = [{'path': req.file_path, 'content': req.override_code, 'language': files[0].get('language', 'python') if files else 'python'}]
+    if not files:
+        raise HTTPException(422, 'The scan does not contain source code that can be patched')
+    patch_result = AutoPatchEngine.patch_entire_codebase(
+        files, selected_patterns=req.selected_patterns or None
+    )
+    patched_files = patch_result.get('patched_files', [])
+    if not patched_files:
+        raise HTTPException(404, 'No applicable safe migration template matched the scan')
+    failed = [item for item in patched_files if item.get('verification_status') not in {'passed', 'static_verified'}]
+    if failed:
+        raise HTTPException(422, f"Patch verification failed for {failed[0]['path']}: {failed[0].get('test_output', '')}")
+    patched_lookup = {item['path']: item['patched_code'] for item in patched_files}
+    output_files = [
+        {**item, 'content': patched_lookup.get(item['path'], item.get('content', ''))}
+        for item in files
+    ]
+    post_scan = enqueue(
+        request,
+        req.project_id,
+        'code',
+        {
+            'files': output_files,
+            'patch_audit': {
+                'baseline_scan_id': req.scan_id,
+                'patched_files': [item['path'] for item in patched_files],
+                'summary': patch_result['summary'],
+            },
+        },
+        lambda payload: scan_sources(payload['files']),
+    )
+    first = patched_files[0]
+    combined_diff = '\n'.join(item.get('unified_diff', '') for item in patched_files)
+    patterns = [pattern for item in patched_files for pattern in item.get('pattern_id', '').split('+') if pattern]
+    value = {
+        'pattern_id': '+'.join(patterns),
+        'target_language': first.get('language', 'multi'),
+        'file_path': first['path'],
+        'original_code': first['original_code'],
+        'patched_code': first['patched_code'],
+        'unified_diff': combined_diff,
+        'transformation_description': ' | '.join(item.get('transformation', '') for item in patched_files),
+        'verification_status': 'passed' if all(item.get('verification_status') == 'passed' for item in patched_files) else 'static_verified',
+        'test_output': '\n'.join(f"{item['path']}: {item.get('test_output', '')}" for item in patched_files),
+        're_scan_summary': patch_result['summary'],
+        'patched_files': patched_files,
+        'project_file_count': len(files),
+        'project_archive_available': True,
+    }
+    value.update({
+        'total_patched': patch_result['summary']['vulnerabilities_remediated'],
+        'baseline_scan_id': req.scan_id,
+        'post_migration_scan_id': post_scan['id'],
+        'applied': True,
+        'execution_logs': [
+            f'[ SCAN ] Loaded completed scan {req.scan_id[:8]}',
+            f"[ PATCH ] Patched {len(patched_files)} of {len(files)} project files",
+            f"[ VERIFY ] Remediated {patch_result['summary']['vulnerabilities_remediated']} findings with real regression/static checks",
+            f"[ RESCAN ] Queued post-migration scan {post_scan['id'][:8]}",
     source = req.override_code or (files[0].get('content', '') if files else '')
     if not source:
         raise HTTPException(422, 'The scan does not contain source code that can be patched')
@@ -2121,6 +2218,31 @@ def patch_from_scan(req: PatchFromScanRequest, request: Request):
         ],
     })
     return value
+
+
+@router.post('/patch/from-scan/download')
+def download_patch_from_scan(req: PatchFromScanRequest, request: Request):
+    record = request.app.state.store.get(req.scan_id, req.project_id)
+    if record is None or record['status'] != 'completed':
+        raise HTTPException(404, 'Completed source scan not found')
+    payload = request.app.state.store.get_payload(req.scan_id, req.project_id) or {}
+    files = payload.get('files') or []
+    if not files:
+        raise HTTPException(422, 'The scan does not contain a source project')
+    patch_result = AutoPatchEngine.patch_entire_codebase(
+        files, selected_patterns=req.selected_patterns or None
+    )
+    if not patch_result.get('patched_files'):
+        raise HTTPException(404, 'No applicable safe migration template matched the scan')
+    zip_bytes = AutoPatchEngine.create_patched_zip(files, patch_result)
+    return Response(
+        content=zip_bytes,
+        media_type='application/zip',
+        headers={
+            'Content-Disposition': 'attachment; filename="ecdat_patched_project.zip"',
+            'Content-Length': str(len(zip_bytes)),
+        },
+    )
 
 
 class CustomLoopRequest(BaseModel):
@@ -2155,6 +2277,7 @@ def run_custom_loop(req: CustomLoopRequest, request: Request):
     regressions = [{'primitive': f.get('primitive', 'Unknown'), 'category': 'regression', 'surface': 'source', 'location': req.file_name, 'severity': f.get('severity', 'HIGH'), 'description': f.get('issue', 'Finding remains after remediation.')} for f in after_findings]
     result = {
         'run_id': str(uuid.uuid4()), 'target_name': req.file_name,
+        'verdict': 'VERIFIED' if not regressions and patch.verification_status in ('passed', 'static_verified') else 'NOT_VERIFIED',
         'verdict': 'VERIFIED' if not regressions and patch.verification_status in ('passed', 'simulated_pass') else 'NOT_VERIFIED',
         'total_duration_ms': round((time.perf_counter() - started) * 1000),
         'before_state': {'code': req.source_code, 'critical_vulnerabilities': len(before_findings), 'security_score': max(0, 100 - len(before_findings) * 20), 'quantum_deficit_years': 13 if before_findings else 0, 'crypto_agility_score': 2.5},

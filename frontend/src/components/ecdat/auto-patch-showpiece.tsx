@@ -258,6 +258,21 @@ export function AutoPatchShowpiece({
 
   // Download the complete uploaded project with patched files replaced in
   // place and every unaffected file preserved at its original relative path.
+  const handleDownloadProject = () => {
+    const postScanId = patchResult?.post_migration_scan_id;
+    if (!postScanId) {
+      setTerminalLogs((current) => [...current, "[ ERROR ] Patched project scan is unavailable."]);
+      return;
+    }
+    // Use a regular same-origin download navigation rather than fetching a
+    // Blob in JavaScript. This works consistently with browser download
+    // protections and streams the exact source tree stored for the post-scan.
+    const a = document.createElement("a");
+    a.href = `/api/scans/${encodeURIComponent(postScanId)}/source-archive?project=${encodeURIComponent(projectId)}`;
+    a.download = `ecdat_patched_project_${postScanId.slice(0, 8)}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   const handleDownloadProject = async () => {
     if (!patchResult?.project_archive_available) return;
     try {
