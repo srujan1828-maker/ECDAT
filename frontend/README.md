@@ -149,8 +149,11 @@ npm install
 Create a `.env.local` file (or use `.env.example`):
 
 ```env
-# Backend API Base URL
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# Backend API base URL used only by the Next.js server-side proxy
+BACKEND_API_URL=http://127.0.0.1:8000/api
+
+# Optional shared backend secret (never use a NEXT_PUBLIC_ prefix)
+ECDAT_API_TOKEN=
 
 # Next.js Application Port (default: 3000)
 PORT=3000
@@ -183,7 +186,8 @@ npm start
 The frontend uses Next.js Route Handlers (`src/app/api/[...path]/route.ts`) to provide seamless proxying to the FastAPI backend:
 - Prevents cross-origin (CORS) complications during local and containerized deployments.
 - Automatically handles stream responses, JSON payloads, and binary downloads (`.cbom.json`, `.patch`).
-- Configurable via `NEXT_PUBLIC_API_URL` environment variable.
+- Configurable via the server-only `BACKEND_API_URL` environment variable.
+- Transparently injects the optional server-only `ECDAT_API_TOKEN` into upstream requests.
 
 All frontend components call standardized functions in `src/lib/api.ts`:
 - `api.getProject(id)` $\rightarrow$ Project metadata, inventory, and status.

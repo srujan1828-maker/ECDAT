@@ -573,12 +573,9 @@ export default function ProjectWorkspacePage({
       } else if (aiMode === "explain") {
         endpoint = "/api/ai/explain";
         body = {
-          algorithm: aiTargetAlgo,
-          cryptographic_role: aiTargetRole,
-          quantum_vulnerable: true,
-          data_lifetime_years: project?.data_lifetime_years || 15,
-          business_criticality: project?.business_criticality || "CRITICAL",
-          api_key: aiApiKey || undefined,
+          primitive: aiTargetAlgo,
+          issue: `${aiTargetRole} primitive requires a post-quantum migration assessment`,
+          code_context: aiSnippet || undefined,
         };
       } else if (aiMode === "advisory") {
         endpoint = "/api/ai/migration-advisory";

@@ -49,11 +49,33 @@ export function ScanResultView({
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/scans/${scanId}/result?project=${encodeURIComponent(projectId)}`);
-        if (!res.ok) {
-          throw new Error(`Failed to load scan results: ${res.statusText}`);
+        const endpoint = `/api/scans/${scanId}/result?project=${encodeURIComponent(projectId)}`;
+        let data: unknown = null;
+        let parseError: unknown = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const suffix = attempt === 0 ? "" : `&_retry=${Date.now()}`;
+          const res = await fetch(`${endpoint}${suffix}`, { cache: "no-store" });
+          const raw = await res.text();
+          if (!res.ok) {
+            let detail = raw;
+            try {
+              detail = JSON.parse(raw)?.detail || raw;
+            } catch {
+              // Preserve the non-JSON upstream error text.
+            }
+            throw new Error(detail || `Failed to load scan results: ${res.statusText}`);
+          }
+          try {
+            data = JSON.parse(raw);
+            parseError = null;
+            break;
+          } catch (err) {
+            parseError = err;
+          }
         }
-        const data = await res.json();
+        if (parseError || data === null) {
+          throw new Error("The scan result response was incomplete. Please retry after the backend finishes transmitting the result.");
+        }
         setResult(data);
       } catch (err: any) {
         setError(err.message || String(err));

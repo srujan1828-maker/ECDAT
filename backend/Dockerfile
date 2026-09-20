@@ -24,7 +24,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend application code
 COPY . .
 
+# Catch syntax errors during image build instead of failing repeatedly at
+# process startup on the deployment platform.
+RUN python -m compileall -q main.py engine evaluation
+
 EXPOSE 8000
 
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
-
