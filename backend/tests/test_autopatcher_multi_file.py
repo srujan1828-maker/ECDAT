@@ -150,3 +150,19 @@ def test_file_with_zero_scan_findings_still_patched():
     res = AutoPatchEngine.patch_entire_codebase(files)
     assert res["summary"]["vulnerable_files_count"] == 1
     assert res["summary"]["vulnerabilities_remediated"] >= 1
+
+
+def test_javascript_patch_uses_honest_static_verification_without_node(monkeypatch):
+    source = "const crypto = require('crypto'); crypto.createHash('md5').update('x').digest('hex');"
+    patch = AutoPatchEngine.create_patch(source, "security.js", "javascript")
+    assert patch is not None
+
+    def missing_node(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "node")
+
+    monkeypatch.setattr("backend.engine.patch_engine.subprocess.run", missing_node)
+    verified = AutoPatchEngine.run_regression_test(patch)
+
+    assert verified.verification_status == "static_verified"
+    assert "post-patch static rescan verified fewer" in verified.test_output
+    assert "passed" not in verified.test_output.lower()

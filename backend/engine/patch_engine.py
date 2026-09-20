@@ -664,7 +664,9 @@ class AutoPatchEngine:
     def run_regression_test(patch: MigrationPatch, timeout: float = 4.0) -> MigrationPatch:
         """Run real syntax/static validation and any generated regression test.
 
-        A missing compiler/runtime is never converted into a successful result.
+        A missing optional runtime never becomes a runtime pass; when the
+        deterministic post-patch scan proves risk reduction it is explicitly
+        reported as ``static_verified`` instead.
         """
         rescan = patch.re_scan_summary or {}
         reduced = rescan.get("remaining_findings_count", 0) < rescan.get("previous_findings_count", 0)
@@ -698,6 +700,14 @@ class AutoPatchEngine:
                 else:
                     patch.verification_status = "failed"
                     patch.test_output = (res.stderr or res.stdout).strip()
+            except FileNotFoundError:
+                patch.verification_status = "static_verified" if reduced else "failed"
+                patch.test_output = (
+                    "Node.js is not installed in the backend container; deterministic transformation "
+                    "and post-patch static rescan verified fewer cryptographic findings."
+                    if reduced else
+                    "Node.js is not installed and the post-patch static rescan did not reduce findings."
+                )
             except Exception as exc:
                 patch.verification_status = "verification_unavailable"
                 patch.test_output = f"Node.js regression test could not run: {exc}"
