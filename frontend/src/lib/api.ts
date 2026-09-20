@@ -41,6 +41,9 @@ export type ScanResult = {
   protocol?: string;
   cipher_name?: string;
   pqc_status?: string;
+  quantum_vulnerable?: boolean | null;
+  hndl_risk?: string;
+  hndl_rationale?: string;
   post_quantum?: PQEvidence;
   certificate?: Record<string, unknown>;
   coverage?: unknown;
