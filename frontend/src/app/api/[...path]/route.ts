@@ -57,6 +57,11 @@ async function forward(
         headers.set(key, value);
       }
     });
+    // The API token is a server-side deployment secret. Inject it in the
+    // proxy rather than exposing it through NEXT_PUBLIC_* browser variables.
+    if (!headers.has('authorization') && process.env.ECDAT_API_TOKEN) {
+      headers.set('authorization', `Bearer ${process.env.ECDAT_API_TOKEN}`);
+    }
 
     const upstream = await fetch(url, {
       method: request.method,
@@ -75,12 +80,17 @@ async function forward(
       );
     }
 
+    const responseHeaders = new Headers({
+      'Content-Type': contentType || 'application/json',
+      'Cache-Control': 'no-store',
+    });
+    for (const name of ['content-disposition', 'content-length']) {
+      const value = upstream.headers.get(name);
+      if (value) responseHeaders.set(name, value);
+    }
     return new Response(upstream.body, {
       status: upstream.status,
-      headers: {
-        'Content-Type': contentType || 'application/json',
-        'Cache-Control': 'no-store',
-      },
+      headers: responseHeaders,
     });
   } catch (err: any) {
     return Response.json(
@@ -95,4 +105,3 @@ export const POST = forward;
 export const PATCH = forward;
 export const DELETE = forward;
 export const PUT = forward;
-

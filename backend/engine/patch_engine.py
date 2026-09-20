@@ -33,7 +33,7 @@ class MigrationPatch(BaseModel):
     unified_diff: str
     transformation_description: str
     generated_regression_test: str
-    verification_status: str = "pending"  # "passed", "failed", "pending", "simulated_pass"
+    verification_status: str = "pending"  # passed, static_verified, failed, verification_unavailable
     test_output: Optional[str] = None
     re_scan_summary: Optional[Dict[str, Any]] = None
 
@@ -539,7 +539,12 @@ class AutoPatchEngine:
         return "generic"
 
     @staticmethod
-    def create_patch(source_code: str, file_path: str = "app.py", language: str = "python") -> Optional[MigrationPatch]:
+    def create_patch(
+        source_code: str,
+        file_path: str = "app.py",
+        language: str = "python",
+        selected_patterns: Optional[List[str]] = None,
+    ) -> Optional[MigrationPatch]:
         lang = (language or "").lower().strip()
         if lang in ("js", "ts", "typescript", "jsx", "tsx", "mjs", "cjs", "node", "nodejs"):
             lang = "javascript"
@@ -563,12 +568,31 @@ class AutoPatchEngine:
         selected_test_template = ""
 
         # Filter templates that match the language or are generic
+        requested = {pattern for pattern in (selected_patterns or []) if pattern in PATCH_TEMPLATES}
+        # Some migrations require coordinated edits (for example both an
+        # OpenSSL header and its call sites). Selecting one member includes
+        # every matching companion template for that language and primitive.
+        companion_prefixes = {
+            "MD5_TO_SHA256_C": ("MD5_",),
+            "DES_TO_AES_C": ("DES_",),
+            "RSA_GENERATE_C": ("RSA_",),
+        }
+        for selected in tuple(requested):
+            for prefix in companion_prefixes.get(selected, ()):
+                requested.update(
+                    key for key, value in PATCH_TEMPLATES.items()
+                    if value.get("lang") == lang and key.startswith(prefix)
+                )
         applicable_templates = {
             k: v for k, v in PATCH_TEMPLATES.items()
-            if v.get("lang") == lang or v.get("lang") == "generic"
+            if (v.get("lang") == lang or v.get("lang") == "generic")
+            and (not requested or k in requested)
         }
-        if not applicable_templates or lang == "generic":
-            applicable_templates = dict(PATCH_TEMPLATES)
+        if not applicable_templates and not requested:
+            applicable_templates = {
+                k: v for k, v in PATCH_TEMPLATES.items()
+                if v.get("lang") == lang or v.get("lang") == "generic" or lang == "generic"
+            }
 
         for p_id, tmpl in applicable_templates.items():
             pattern = tmpl["search"]
@@ -580,7 +604,7 @@ class AutoPatchEngine:
                     selected_test_template = tmpl.get("test_template", "")
 
         # Fallback: if deterministic templates did not match, check for line-level replacements for weak primitives
-        if not applied_patterns or patched == source_code:
+        if (not requested) and (not applied_patterns or patched == source_code):
             fallback_replacements = [
                 (r"\bhashlib\.md5\(", "hashlib.sha256(", "MD5_TO_SHA256_FALLBACK", "Upgrade hashlib.md5 to hashlib.sha256"),
                 (r"\bhashlib\.sha1\(", "hashlib.sha256(", "SHA1_TO_SHA256_FALLBACK", "Upgrade hashlib.sha1 to hashlib.sha256"),
@@ -638,10 +662,28 @@ class AutoPatchEngine:
 
     @staticmethod
     def run_regression_test(patch: MigrationPatch, timeout: float = 4.0) -> MigrationPatch:
-        """Executes the generated differential test to verify patch safety."""
+        """Run real syntax/static validation and any generated regression test.
+
+        A missing compiler/runtime is never converted into a successful result.
+        """
+        rescan = patch.re_scan_summary or {}
+        reduced = rescan.get("remaining_findings_count", 0) < rescan.get("previous_findings_count", 0)
+
+        if patch.target_language == "python":
+            try:
+                compile(patch.patched_code, patch.file_path, "exec")
+            except SyntaxError as exc:
+                patch.verification_status = "failed"
+                patch.test_output = f"Patched Python syntax check failed: {exc}"
+                return patch
+
         if not patch.generated_regression_test.strip():
-            patch.verification_status = "simulated_pass"
-            patch.test_output = "Syntactic and static analysis verified with zero regressions."
+            patch.verification_status = "static_verified" if reduced else "failed"
+            patch.test_output = (
+                "Patched source passed syntax/static validation and the post-patch scan reduced findings."
+                if reduced else
+                "Post-patch scan did not demonstrate a reduction in findings."
+            )
             return patch
 
         if patch.target_language in ("javascript", "js"):
@@ -657,13 +699,16 @@ class AutoPatchEngine:
                     patch.verification_status = "failed"
                     patch.test_output = (res.stderr or res.stdout).strip()
             except Exception as exc:
-                patch.verification_status = "simulated_pass"
-                patch.test_output = f"Node runtime simulation passed: {exc}"
+                patch.verification_status = "verification_unavailable"
+                patch.test_output = f"Node.js regression test could not run: {exc}"
             return patch
 
         if patch.target_language not in ("python",):
-            patch.verification_status = "simulated_pass"
-            patch.test_output = f"{patch.target_language.upper()} syntax verified against deterministic NIST FIPS replacement standard."
+            patch.verification_status = "static_verified" if reduced else "failed"
+            patch.test_output = (
+                f"{patch.target_language.upper()} post-patch static scan confirmed fewer findings."
+                if reduced else f"{patch.target_language.upper()} post-patch scan did not reduce findings."
+            )
             return patch
 
         try:
@@ -679,13 +724,17 @@ class AutoPatchEngine:
                 patch.test_output = res.stderr.strip()
             return patch
         except Exception as exc:
-            patch.verification_status = "simulated_pass"
-            patch.test_output = f"Python syntax verified: {exc}"
+            patch.verification_status = "verification_unavailable"
+            patch.test_output = f"Python regression test could not run: {exc}"
 
         return patch
 
     @staticmethod
-    def patch_entire_codebase(files: list[dict], workspace_root: Optional[str] = None) -> dict:
+    def patch_entire_codebase(
+        files: list[dict],
+        workspace_root: Optional[str] = None,
+        selected_patterns: Optional[List[str]] = None,
+    ) -> dict:
         """Analyzes and automatically patches an entire multi-file codebase (backend + frontend)."""
         from .source_scan import normalize_language
         patched_files = []
@@ -709,7 +758,9 @@ class AutoPatchEngine:
             findings = pre_res.get('findings', [])
 
             # ALWAYS attempt patching - never gated by if findings
-            patch = AutoPatchEngine.create_patch(content, raw_path, lang)
+            patch = AutoPatchEngine.create_patch(
+                content, raw_path, lang, selected_patterns=selected_patterns
+            )
             if patch and patch.patched_code != content:
                 tested = AutoPatchEngine.run_regression_test(patch)
                 findings_count = max(len(findings), len(tested.pattern_id.split('+')))
@@ -748,7 +799,7 @@ class AutoPatchEngine:
                 "remaining_vulnerabilities": total_vulnerabilities_after,
                 "remediation_rate_percent": remediation_rate,
                 "languages_detected": list(languages_detected),
-                "all_verified": all(p.get("verification_status") in ("passed", "simulated_pass") for p in patched_files) if patched_files else True,
+                "all_verified": all(p.get("verification_status") in ("passed", "static_verified") for p in patched_files) if patched_files else True,
             },
             "patched_files": patched_files,
             "clean_file_paths": unmodified_files,

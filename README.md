@@ -216,6 +216,9 @@ Every scan workspace (`network`, `code`, `binary`) features a dedicated scan his
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
 | `/api/scans` | `GET` | List all scans for the specified project |
+| `/api/projects` | `GET`, `POST` | List and create persistent frontend workspaces |
+| `/api/projects/{id}` | `GET`, `PATCH` | Read and update project business context |
+| `/api/auth/login` | `POST` | Authenticate a console user |
 | `/api/scan/network` | `POST` | Start an active TLS and hybrid PQC network scan |
 | `/api/scan/sources` | `POST` | Scan source code files or pasted snippets |
 | `/api/scan/binary/upload` | `POST` | Upload and inspect an ELF/PE binary or firmware ZIP |
@@ -232,6 +235,8 @@ Every scan workspace (`network`, `code`, `binary`) features a dedicated scan his
 | `/api/experimental/autopatch` | `POST` | Generate unified git diff patch & run regression tests |
 | `/api/experimental/custom-crypto` | `POST` | Detect proprietary cipher & run 8-sample benchmark suite |
 | `/api/experimental/binary-ml` | `POST` | Run binary opcode density and Shannon entropy ML scoring |
+| `/api/custom-loop/run` | `POST` | Run source discovery, deterministic remediation, regression testing, and verification |
+| `/api/patch/from-scan` | `POST` | Generate a deterministic patch directly from a completed source scan |
 | `/api/demo/sih-flow` | `POST` | Execute the complete 10-step SIH demo flow |
 
 ---
@@ -266,6 +271,11 @@ npm ci
 npm run dev
 ```
 Open `http://localhost:3000/dashboard` in your browser.
+
+The frontend always calls same-origin `/api/*` URLs. Its Next.js route handler
+forwards them to `BACKEND_API_URL`; when `ECDAT_API_TOKEN` is configured, set
+the same value for both services so the server-side proxy can authenticate
+without exposing the secret to browser JavaScript.
 
 ---
 
