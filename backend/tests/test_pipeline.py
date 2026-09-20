@@ -188,6 +188,10 @@ def tls_server(tmp_path, monkeypatch):
 def test_tls_job_to_export(client, tls_server):
     record = finish(client, client.post('/api/scan/network', json={'target': f'https://127.0.0.1:{tls_server}/test'}))
     assert record['status'] == 'completed', record
+    rendered = client.get(f"/api/scans/{record['id']}/result").json()
+    assert rendered['kind'] == 'network'
+    assert rendered['scan_id'] == record['id']
+    assert rendered['finished_at']
     result = record['result']
     assert result['certificate']['expired'] is True
     assert result['certificate']['trust_validated'] is False

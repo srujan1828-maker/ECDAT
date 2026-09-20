@@ -135,7 +135,7 @@ Exports CycloneDX 1.6 compliant Cryptographic Bill of Materials (CBOM) enriched 
 | :--- | :--- | :--- | :--- |
 | **A: Runtime LD_PRELOAD Tracer** | [`runtime_tracer.py`](backend/engine/runtime_tracer.py) | C shared library hook intercepting runtime crypto APIs | Compiles portable C source (`libecdat_tracer.so`) intercepting `EVP_EncryptInit_ex`, `RSA_public_encrypt`, `MD5_Init`, and `RAND_bytes`. Generates runtime event logs. |
 | **B: eBPF / Uprobe Tracer** | [`ebpf_tracer.py`](backend/engine/ebpf_tracer.py) | Kernel uprobe tracing on user-space libraries | Generates Linux `bpftrace` scripts and raw eBPF C programs attaching to `/usr/lib/libcrypto.so.3` symbols. Includes safe unprivileged fallback simulation. |
-| **C: Auto-Patching Engine** | [`patch_engine.py`](backend/engine/patch_engine.py) | Deterministic code transformation with regression tests | Pattern-based AST code refactoring (MD5 $\to$ SHA-256, RSA-1024 $\to$ RSA-3072/ML-KEM, DES $\to$ AES-256-GCM). Emits unified git diffs and differential test runners. |
+| **C: Auto-Patching Engine** | [`patch_engine.py`](backend/engine/patch_engine.py) | Deterministic source transformations with explicit verification status | Pattern-based replacements for hash and RSA-size migrations. Node cipher replacements use fresh material and require manual key rotation; cipher migrations needing key/ciphertext conversion are withheld rather than silently applying an unsafe rename. Emits unified diffs and reports `not_executed` when runtime verification did not run. |
 | **D: Custom Crypto Detector** | [`custom_crypto_detector.py`](backend/engine/custom_crypto_detector.py) | Proprietary/obfuscated cipher detection with benchmark | Shannon entropy + loop-shift heuristics + LLM assistance (Ollama/OpenAI). Ships with an 8-sample evaluation benchmark suite reporting Precision, Recall, and F1. |
 | **E: Passive PCAP Sniffer** | [`pcap_engine.py`](backend/engine/pcap_engine.py) | Zero-probe network discovery via packet capture | Pure-Python PCAP parser and TLS record dissector extracting ClientHello/ServerHello, cipher suites, curves, and computing JA3 and JA4 fingerprints. |
 | **F: Quantum Resource Estimator** | [`quantum_estimator.py`](backend/engine/quantum_estimator.py) | Shor's algorithm surface code resource modeling | Mathematical formula calculating logical qubits, surface code distance $d$, physical qubits, and runtime hours citing Gidney & Ekerå (2021) and Roetteler et al. (2017). |
@@ -173,8 +173,8 @@ A fully integrated 1-click execution sequence demonstrating the complete lifecyc
 3. **Cross-Surface Identity Resolution**: Builds the 5-tier entity graph mapping host to code files.
 4. **Blast-Radius & Risk Assessment**: Calculates downstream exposure and HNDL threat ratings.
 5. **Dependency-Aware Migration Planning**: Generates phased transition roadmap.
-6. **Automated Cryptographic Patching**: Applies deterministic git diff patches (MD5 $\to$ SHA-256, RSA $\to$ ML-KEM).
-7. **Regression Test Execution**: Executes differential tests on the patched code.
+6. **Automated Cryptographic Patching**: Applies deterministic safe git diff patches (for example MD5 $\to$ SHA-256 and RSA-1024 $\to$ RSA-3072); migrations requiring key rotation are flagged for manual work.
+7. **Regression Test Execution**: Executes available differential tests and explicitly reports when a runtime test was not executed.
 8. **Post-Migration Re-Scan**: Re-probes the hardened services and codebases.
 9. **Closed-Loop Differential Verification**: Audits baseline vs post-migration evidence and outputs `VERIFIED`.
 10. **CycloneDX 1.6 CBOM Export**: Emits the final cryptographic bill of materials.

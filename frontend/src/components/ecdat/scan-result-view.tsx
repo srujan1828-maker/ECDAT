@@ -18,6 +18,9 @@ import {
   ChevronRight,
   Clock,
   Sparkles,
+  Globe2,
+  Shield,
+  KeyRound,
 } from "lucide-react";
 
 interface ScanResultViewProps {
@@ -113,6 +116,10 @@ export function ScanResultView({
         </button>
       </div>
     );
+  }
+
+  if (result.kind === "network" || result.target) {
+    return <NetworkScanResult result={result} scanId={scanId} onBack={onBack} />;
   }
 
   const findings = result.findings || [];
@@ -456,4 +463,129 @@ export function ScanResultView({
       </div>
     </div>
   );
+}
+
+type NetworkProbeTest = {
+  group?: string;
+  status?: string;
+  reason?: string;
+  evidence?: string;
+};
+
+type NetworkCompatibilityObservation = {
+  version?: string;
+  cipher?: string;
+  status?: string;
+};
+
+type NetworkScanData = {
+  [key: string]: unknown;
+  target?: string;
+  host?: string;
+  ip_address?: string;
+  protocol?: string;
+  cipher_name?: string;
+  pqc_status?: string;
+  hndl_risk?: string;
+  hndl_rationale?: string;
+  key_exchange?: string;
+  certificate?: Record<string, unknown>;
+  post_quantum?: { tests?: NetworkProbeTest[] };
+  protocol_tests?: NetworkCompatibilityObservation[];
+  cipher_tests?: NetworkCompatibilityObservation[];
+};
+
+function NetworkScanResult({
+  result,
+  scanId,
+  onBack,
+}: {
+  result: NetworkScanData;
+  scanId: string;
+  onBack: () => void;
+}) {
+  const certificate = result.certificate || {};
+  const pqcTests = result.post_quantum?.tests || [];
+  const protocolTests = result.protocol_tests || [];
+  const cipherTests = result.cipher_tests || [];
+  const risk = result.hndl_risk || "UNKNOWN";
+  const riskColor = risk === "CRITICAL" || risk === "HIGH" ? "text-rose-400" : risk === "LOW" ? "text-emerald-400" : "text-amber-400";
+  const certificateRows: Array<[string, string]> = [
+    ["Endpoint", `${result.host || "—"}${result.ip_address ? ` (${result.ip_address})` : ""}`],
+    ["Key exchange", result.key_exchange || "Not exposed by endpoint"],
+    ["Certificate subject", String(certificate.subject || "Not available")],
+    ["Certificate public key", String(certificate.public_key || "Not available")],
+    ["Certificate validity", String(certificate.valid_to || "Not available")],
+    ["Trust validation", certificate.trust_validated === true ? "Validated" : certificate.trust_validated === false ? "Not validated" : "Not measured"],
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-subtle pb-4">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="p-1.5 rounded-lg border border-subtle bg-surface hover:bg-canvas text-quiet hover:text-foreground transition-colors">
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <Globe2 className="h-5 w-5 text-emerald-400" />
+              <h2 className="text-lg font-bold tracking-tight text-foreground font-mono">Network TLS Scan · #{scanId.slice(0, 8)}</h2>
+            </div>
+            <p className="text-xs text-quiet mt-0.5">Measured endpoint: <span className="font-mono text-cyan-400">{result.target || "Unknown target"}</span></p>
+          </div>
+        </div>
+        <span className="text-[10px] font-mono font-bold px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">MEASURED</span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          ["TLS Protocol", result.protocol || "Not negotiated"],
+          ["Cipher Suite", result.cipher_name || "Not negotiated"],
+          ["PQC Status", result.pqc_status || "Not measured"],
+          ["HNDL Risk", risk],
+        ].map(([label, value]) => (
+          <div key={label} className="p-4 rounded-xl bg-surface border border-subtle">
+            <p className="text-[10px] uppercase font-mono text-quiet">{label}</p>
+            <p className={`mt-2 text-sm font-bold break-words ${label === "HNDL Risk" ? riskColor : "text-foreground"}`}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section className="rounded-xl border border-subtle bg-surface p-5 space-y-4">
+          <h3 className="text-sm font-bold flex items-center gap-2"><Shield className="h-4 w-4 text-cyan-400" /> Transport and certificate evidence</h3>
+          <dl className="divide-y divide-subtle text-xs">
+            {certificateRows.map(([label, value]) => <div key={label} className="py-2.5 grid grid-cols-[minmax(120px,0.8fr)_2fr] gap-3"><dt className="text-quiet">{label}</dt><dd className="font-mono text-foreground break-all">{value}</dd></div>)}
+          </dl>
+        </section>
+
+        <section className="rounded-xl border border-subtle bg-surface p-5 space-y-4">
+          <h3 className="text-sm font-bold flex items-center gap-2"><KeyRound className="h-4 w-4 text-violet-400" /> Post-quantum probe results</h3>
+          {pqcTests.length > 0 ? (
+            <div className="space-y-2">
+              {pqcTests.map((test, index) => (
+                <div key={`${test.group}-${index}`} className="rounded-lg bg-canvas border border-subtle p-3 flex items-start justify-between gap-3">
+                  <div><p className="font-mono text-xs text-foreground">{test.group || "TLS group"}</p><p className="text-[11px] text-quiet mt-1">{test.reason || test.evidence || "Explicit TLS 1.3 group probe."}</p></div>
+                  <span className="shrink-0 text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-subtle text-cyan-300">{test.status || "unknown"}</span>
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-xs text-quiet">No PQC handshake observations were returned by the scanner.</p>}
+          <p className="text-xs text-quiet border-t border-subtle pt-3">{result.hndl_rationale || "HNDL risk could not be determined from the available transport observations."}</p>
+        </section>
+      </div>
+
+      <section className="rounded-xl border border-subtle bg-surface overflow-hidden">
+        <div className="px-5 py-4 border-b border-subtle"><h3 className="text-sm font-bold">Protocol and cipher compatibility</h3><p className="text-xs text-quiet mt-1">Only bounded, explicit offers are shown; an unlisted algorithm was not tested.</p></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-subtle">
+          <ObservationList title="TLS versions" items={protocolTests} nameKey="version" />
+          <ObservationList title="Cipher suites" items={cipherTests} nameKey="cipher" />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ObservationList({ title, items, nameKey }: { title: string; items: NetworkCompatibilityObservation[]; nameKey: "version" | "cipher" }) {
+  return <div className="p-5"><h4 className="text-xs font-bold text-quiet uppercase tracking-wide">{title}</h4>{items.length ? <div className="mt-3 space-y-2">{items.map((item, index) => <div key={`${item[nameKey]}-${index}`} className="flex justify-between gap-3 text-xs"><span className="font-mono text-foreground break-all">{item[nameKey]}</span><span className="shrink-0 text-[10px] uppercase text-cyan-300">{item.status || "not tested"}</span></div>)}</div> : <p className="mt-3 text-xs text-quiet">No explicit compatibility results were returned.</p>}</div>;
 }

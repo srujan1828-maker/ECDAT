@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -33,7 +34,7 @@ class MigrationPatch(BaseModel):
     unified_diff: str
     transformation_description: str
     generated_regression_test: str
-    verification_status: str = "pending"  # passed, static_verified, failed, verification_unavailable
+    verification_status: str = "pending"  # passed, not_executed, failed, verification_unavailable
     test_output: Optional[str] = None
     re_scan_summary: Optional[Dict[str, Any]] = None
 
@@ -195,6 +196,7 @@ if (hash.length !== 64) {
     console.error('Expected 64 hex chars, got ' + hash.length);
     process.exit(1);
 }
+
 console.log('TEST PASSED: SHA-256 integrity and output size verified in Node.js.');
 """
     },
@@ -223,14 +225,15 @@ if (details && details.modulusLength < 3072) {
     console.error('Expected modulusLength >= 3072, got ' + details.modulusLength);
     process.exit(1);
 }
+
 console.log('TEST PASSED: Verified RSA key size >= 3072 bits in Node.js.');
 """
     },
     "DES_TO_AES_JS": {
         "lang": "javascript",
         "search": r"(?:crypto\.)?createCipheriv\(\s*['\"]des(?:-cbc|-ecb)?['\"]\s*,\s*([^,]+),\s*([^)]*)\)",
-        "replace": r"crypto.createCipheriv('aes-256-cbc', Buffer.alloc(32, \g<1>), \g<2> ? Buffer.alloc(16, \g<2>) : Buffer.alloc(16, 0))",
-        "desc": "Upgrade 56-bit DES symmetric cipher to FIPS 197 AES-256 block cipher in Node.js.",
+        "replace": r"crypto.createCipheriv('aes-256-cbc', crypto.randomBytes(32), crypto.randomBytes(16)) /* ECDAT: fresh AES key and IV generated; MANUAL KEY ROTATION REQUIRED before deployment. */",
+        "desc": "Replace DES with AES-256-CBC using fresh key material. Manual key rotation and ciphertext migration are required before deployment.",
         "test_template": r"""// Regression verification script for Node.js AES-256 cipher
 const crypto = require('crypto');
 const key = crypto.randomBytes(32);
@@ -248,15 +251,15 @@ console.log('TEST PASSED: AES-256 block cipher successfully verified in Node.js.
     "DES_CREATECIPHER_JS": {
         "lang": "javascript",
         "search": r"(?:crypto\.)?createCipher\(\s*['\"]des(?:-cbc|-ecb)?['\"]\s*,\s*([^)]+)\)",
-        "replace": r"crypto.createCipheriv('aes-256-cbc', Buffer.alloc(32, \g<1>), Buffer.alloc(16, 0))",
-        "desc": "Upgrade legacy crypto.createCipher('des') to AES-256-CBC.",
+        "replace": r"crypto.createCipheriv('aes-256-cbc', crypto.randomBytes(32), crypto.randomBytes(16)) /* ECDAT: MANUAL KEY ROTATION REQUIRED; legacy password material was intentionally not reused. */",
+        "desc": "Replace legacy DES password encryption with fresh AES-256-CBC material. Manual key rotation is required.",
         "test_template": ""
     },
     "RC4_TO_AES_JS": {
         "lang": "javascript",
         "search": r"(?:crypto\.)?createCipheriv\(\s*['\"]rc4['\"]\s*,\s*([^,]+),\s*([^)]*)\)",
-        "replace": r"crypto.createCipheriv('aes-256-cbc', Buffer.alloc(32, \g<1>), Buffer.alloc(16, 0))",
-        "desc": "Upgrade insecure RC4 cipher to AES-256 in Node.js.",
+        "replace": r"crypto.createCipheriv('aes-256-cbc', crypto.randomBytes(32), crypto.randomBytes(16)) /* ECDAT: MANUAL KEY ROTATION REQUIRED; legacy key material was intentionally not reused. */",
+        "desc": "Replace RC4 with fresh AES-256-CBC material. Manual key rotation is required.",
         "test_template": r"""const crypto = require('crypto');
 const cipher = crypto.createCipheriv('aes-256-cbc', crypto.randomBytes(32), crypto.randomBytes(16));
 console.log('TEST PASSED: RC4 upgraded to AES-256.');
@@ -265,8 +268,8 @@ console.log('TEST PASSED: RC4 upgraded to AES-256.');
     "RC4_CREATECIPHER_JS": {
         "lang": "javascript",
         "search": r"(?:crypto\.)?createCipher\(\s*['\"]rc4['\"]\s*,\s*([^)]+)\)",
-        "replace": r"crypto.createCipheriv('aes-256-cbc', Buffer.alloc(32, \g<1>), Buffer.alloc(16, 0))",
-        "desc": "Upgrade legacy crypto.createCipher('rc4') to AES-256-CBC.",
+        "replace": r"crypto.createCipheriv('aes-256-cbc', crypto.randomBytes(32), crypto.randomBytes(16)) /* ECDAT: MANUAL KEY ROTATION REQUIRED; legacy key material was intentionally not reused. */",
+        "desc": "Replace RC4 password encryption with fresh AES-256-CBC material. Manual key rotation is required.",
         "test_template": ""
     },
     "CRYPTOJS_MD5_JS": {
@@ -510,11 +513,23 @@ int main() {
     },
     "GENERIC_RSA_1024": {
         "lang": "generic",
-        "search": r"((?:RSA_generate_key|modulusLength|key_size|initialize)\w*\s*.*?)(?:512|1024)\b",
+        "search": r"((?:RSA_generate_key|modulusLength|key_size|initialize)\w*\s*[^\r\n]{0,1000}?)(?:512|1024)\b",
         "replace": r"\g<1>3072",
         "desc": "Upgrade RSA key length to 3072-bit margin.",
         "test_template": ""
     }
+}
+
+# These substitutions change key sizes, IV/nonce requirements, padding, or
+# ciphertext format. Rewriting the primitive name alone creates code that is
+# invalid or loses access to existing ciphertext, so a migration plan with key
+# rotation and data reencryption is required before they can be automated.
+MANUAL_CIPHER_MIGRATION_TEMPLATES = {
+    "DES_TO_AES_PYTHON", "3DES_TO_AES_PYTHON", "BLOWFISH_TO_AES_PYTHON",
+    "ARC4_TO_AES_PYTHON", "PYCRYPTODOME_DES_PYTHON", "CRYPTOJS_DES_JS",
+    "DES_TO_AES_JAVA", "DESEDE_TO_AES_JAVA", "RC4_TO_AES_JAVA",
+    "GO_DES_IMPORT", "DES_TO_AES_GO", "DES_INCLUDE_C", "DES_TO_AES_C",
+    "DES_SET_KEY_C", "DES_SCHEDULE_C", "DES_CBLOCK_C", "DES_C_FALLBACK",
 }
 
 
@@ -567,7 +582,8 @@ class AutoPatchEngine:
         applied_descriptions = []
         selected_test_template = ""
 
-        # Filter templates that match the language or are generic
+        # A classified source file receives only templates for its own
+        # language. Generic templates are reserved for symbol/binary inputs.
         requested = {pattern for pattern in (selected_patterns or []) if pattern in PATCH_TEMPLATES}
         # Some migrations require coordinated edits (for example both an
         # OpenSSL header and its call sites). Selecting one member includes
@@ -585,16 +601,13 @@ class AutoPatchEngine:
                 )
         applicable_templates = {
             k: v for k, v in PATCH_TEMPLATES.items()
-            if (v.get("lang") == lang or v.get("lang") == "generic")
+            if v.get("lang") == lang
             and (not requested or k in requested)
         }
-        if not applicable_templates and not requested:
-            applicable_templates = {
-                k: v for k, v in PATCH_TEMPLATES.items()
-                if v.get("lang") == lang or v.get("lang") == "generic" or lang == "generic"
-            }
 
         for p_id, tmpl in applicable_templates.items():
+            if p_id in MANUAL_CIPHER_MIGRATION_TEMPLATES:
+                continue
             pattern = tmpl["search"]
             if re.search(pattern, patched, re.IGNORECASE):
                 patched = re.sub(pattern, tmpl["replace"], patched, flags=re.IGNORECASE)
@@ -603,19 +616,27 @@ class AutoPatchEngine:
                 if not selected_test_template and tmpl.get("test_template"):
                     selected_test_template = tmpl.get("test_template", "")
 
-        # Fallback: if deterministic templates did not match, check for line-level replacements for weak primitives
+        # Fallbacks are also language-scoped: quoted Java/C snippets in a
+        # Python document are data, not source that may be rewritten.
         if (not requested) and (not applied_patterns or patched == source_code):
-            fallback_replacements = [
+            fallback_replacements = {
+                "python": [
                 (r"\bhashlib\.md5\(", "hashlib.sha256(", "MD5_TO_SHA256_FALLBACK", "Upgrade hashlib.md5 to hashlib.sha256"),
                 (r"\bhashlib\.sha1\(", "hashlib.sha256(", "SHA1_TO_SHA256_FALLBACK", "Upgrade hashlib.sha1 to hashlib.sha256"),
+                ],
+                "javascript": [
                 (r"(?:crypto\.)?createHash\(\s*['\"]md5['\"]\s*\)", "crypto.createHash('sha256')", "MD5_NODE_FALLBACK", "Upgrade Node md5 to sha256"),
                 (r"(?:crypto\.)?createHash\(\s*['\"]sha-?1['\"]\s*\)", "crypto.createHash('sha256')", "SHA1_NODE_FALLBACK", "Upgrade Node sha1 to sha256"),
+                ],
+                "java": [
                 (r"MessageDigest\.getInstance\(\s*['\"]MD5['\"]\s*\)", 'MessageDigest.getInstance("SHA-256")', "MD5_JAVA_FALLBACK", "Upgrade Java MD5 to SHA-256"),
                 (r"MessageDigest\.getInstance\(\s*['\"]SHA-?1['\"]\s*\)", 'MessageDigest.getInstance("SHA-256")', "SHA1_JAVA_FALLBACK", "Upgrade Java SHA-1 to SHA-256"),
+                ],
+                "c_cpp": [
                 (r"\bMD5\(([^,]+),\s*([^,]+),\s*([^)]+)\)", r"SHA256(\1, \2, \3)", "MD5_C_FALLBACK", "Upgrade OpenSSL MD5 to SHA256"),
-                (r"\bDES_ecb_encrypt\b", "AES_ecb_encrypt", "DES_C_FALLBACK", "Upgrade OpenSSL DES to AES"),
                 (r"(['\"]?(?:key_size|modulusLength|initialize)['\"]?\s*[:=]\s*)(?:512|1024)\b", r"\g<1>3072", "RSA_FALLBACK", "Upgrade RSA key to 3072-bit minimum"),
-            ]
+                ],
+            }.get(lang, [])
             for pat, rep, pid, pdesc in fallback_replacements:
                 if re.search(pat, patched, re.IGNORECASE):
                     patched = re.sub(pat, rep, patched, flags=re.IGNORECASE)
@@ -664,9 +685,9 @@ class AutoPatchEngine:
     def run_regression_test(patch: MigrationPatch, timeout: float = 4.0) -> MigrationPatch:
         """Run real syntax/static validation and any generated regression test.
 
-        A missing optional runtime never becomes a runtime pass; when the
-        deterministic post-patch scan proves risk reduction it is explicitly
-        reported as ``static_verified`` instead.
+        A missing runtime is never represented as a pass. Static scanning is
+        useful evidence, but it cannot establish that generated code compiles
+        or preserves runtime behaviour.
         """
         rescan = patch.re_scan_summary or {}
         reduced = rescan.get("remaining_findings_count", 0) < rescan.get("previous_findings_count", 0)
@@ -680,9 +701,9 @@ class AutoPatchEngine:
                 return patch
 
         if not patch.generated_regression_test.strip():
-            patch.verification_status = "static_verified" if reduced else "failed"
+            patch.verification_status = "not_executed" if reduced else "failed"
             patch.test_output = (
-                "Patched source passed syntax/static validation and the post-patch scan reduced findings."
+                "No executable regression test is available. Patched source passed syntax/static validation and the post-patch scan reduced findings; runtime verification was not executed."
                 if reduced else
                 "Post-patch scan did not demonstrate a reduction in findings."
             )
@@ -690,6 +711,18 @@ class AutoPatchEngine:
 
         if patch.target_language in ("javascript", "js"):
             try:
+                with tempfile.TemporaryDirectory(prefix="ecdat-patch-") as temp_dir:
+                    candidate = os.path.join(temp_dir, "patched.js")
+                    with open(candidate, "w", encoding="utf-8") as handle:
+                        handle.write(patch.patched_code)
+                    syntax = subprocess.run(
+                        ["node", "--check", candidate],
+                        capture_output=True, text=True, timeout=timeout, cwd=temp_dir
+                    )
+                    if syntax.returncode != 0:
+                        patch.verification_status = "failed"
+                        patch.test_output = "Patched JavaScript syntax check failed: " + (syntax.stderr or syntax.stdout).strip()
+                        return patch
                 res = subprocess.run(
                     ["node", "-e", patch.generated_regression_test],
                     capture_output=True, text=True, timeout=timeout
@@ -701,10 +734,10 @@ class AutoPatchEngine:
                     patch.verification_status = "failed"
                     patch.test_output = (res.stderr or res.stdout).strip()
             except FileNotFoundError:
-                patch.verification_status = "static_verified" if reduced else "failed"
+                patch.verification_status = "not_executed" if reduced else "failed"
                 patch.test_output = (
-                    "Node.js is not installed in the backend container; deterministic transformation "
-                    "and post-patch static rescan verified fewer cryptographic findings."
+                    "Node.js is not installed in the backend container. The deterministic transformation "
+                    "reduced static findings, but runtime verification was not executed."
                     if reduced else
                     "Node.js is not installed and the post-patch static rescan did not reduce findings."
                 )
@@ -714,9 +747,9 @@ class AutoPatchEngine:
             return patch
 
         if patch.target_language not in ("python",):
-            patch.verification_status = "static_verified" if reduced else "failed"
+            patch.verification_status = "not_executed" if reduced else "failed"
             patch.test_output = (
-                f"{patch.target_language.upper()} post-patch static scan confirmed fewer findings."
+                f"{patch.target_language.upper()} post-patch static scan confirmed fewer findings, but runtime verification was not executed."
                 if reduced else f"{patch.target_language.upper()} post-patch scan did not reduce findings."
             )
             return patch
@@ -809,7 +842,7 @@ class AutoPatchEngine:
                 "remaining_vulnerabilities": total_vulnerabilities_after,
                 "remediation_rate_percent": remediation_rate,
                 "languages_detected": list(languages_detected),
-                "all_verified": all(p.get("verification_status") in ("passed", "static_verified") for p in patched_files) if patched_files else True,
+                "all_verified": all(p.get("verification_status") == "passed" for p in patched_files) if patched_files else True,
             },
             "patched_files": patched_files,
             "clean_file_paths": unmodified_files,
@@ -845,7 +878,7 @@ class AutoPatchEngine:
             f"**Total Files Scanned**: {s.get('total_files_scanned', 0)}",
             f"**Vulnerable Files Identified & Remediated**: {s.get('vulnerable_files_count', 0)}",
             f"**Weaknesses Remediated**: {s.get('vulnerabilities_remediated', 0)} of {s.get('vulnerabilities_found', 0)} ({s.get('remediation_rate_percent', 100)}%)",
-            f"**Verification Status**: {'ALL TESTS PASSED' if s.get('all_verified') else 'VERIFICATION COMPLETED'}",
+            f"**Verification Status**: {'ALL TESTS PASSED' if s.get('all_verified') else 'NOT ALL PATCHES WERE EXECUTED AND PASSED'}",
             "",
             "## 1. Compliance Standard Upgrades",
             "- **Hashing**: Upgraded to NIST FIPS 180-4 SHA-256 / SHA-3.",
