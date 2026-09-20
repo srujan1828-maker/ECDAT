@@ -293,7 +293,19 @@ npm run build
 
 ---
 
-## 11. Security, Ethics & Limitations
+## 11. NVIDIA NIM configuration
+
+Configure the NVIDIA NIM key only in the backend environment—never in the browser:
+
+```bash
+export NVIDIA_API_KEY="nvapi-..."
+```
+
+For Docker Compose, copy the root [`.env.example`](.env.example) to `.env`, set `NVIDIA_API_KEY`, then start the stack. The AI refactoring endpoint reads this server-side variable directly.
+
+---
+
+## 12. Security, Ethics & Limitations
 
 1. **Authorization**: ECDAT active network probes must only be directed against endpoints and domain names you are authorized to inspect.
 2. **Safe Execution**: Source code files and uploaded binaries are never executed. AST parsing, opcode frequency analysis, and regex extraction are performed statically.
@@ -302,6 +314,6 @@ npm run build
 
 ---
 
-## 12. License
+## 13. License
 
 This project is licensed under the Apache License 2.0. See [`LICENSE`](LICENSE) for details.
