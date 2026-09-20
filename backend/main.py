@@ -48,7 +48,7 @@ from fastapi import FastAPI, APIRouter, File, HTTPException, Query, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from engine.scan_store import ScanStore
-from engine.source_scan import scan_sources, LANGUAGES, is_manifest_file
+from engine.source_scan import scan_sources, LANGUAGES, LANGUAGE_ALIASES, is_manifest_file, normalize_language
 from engine.binary_deep import scan_upload, MAX_BYTES
 from engine.website_inspector import scan_website
 from engine.migration_planner import build_plan
@@ -154,8 +154,14 @@ class SourceFile(BaseModel):
         clean_path = self.path.replace('\\', '/')
         if clean_path.startswith('/') or '..' in clean_path.split('/'):
             raise ValueError('Use a relative file path without parent traversal')
-        if self.language is not None and self.language not in LANGUAGES:
-            raise ValueError('Unsupported language')
+        # Clients may send generic/unknown for README, configuration, and manifest files.
+        # Resolve aliases here so these metadata files remain scannable instead of failing
+        # validation before the source scanner can apply its generic pattern analysis.
+        if self.language is not None:
+            requested_language = str(self.language).strip().lower()
+            if requested_language not in LANGUAGE_ALIASES:
+                raise ValueError('Unsupported language')
+            self.language = normalize_language(requested_language, clean_path)
         return self
 
 
@@ -1575,7 +1581,6 @@ class AIRefactorRequest(BaseModel):
     source_code: str = Field(min_length=1, max_length=10_000_000)
     language: str = "python"
     findings: Optional[list[dict]] = None
-    nvidia_api_key: Optional[str] = None
     model: Optional[str] = None
 
 
@@ -1586,7 +1591,6 @@ def ai_refactor_endpoint(req: AIRefactorRequest):
         source_code=req.source_code,
         language=req.language,
         findings=req.findings,
-        api_key=req.nvidia_api_key,
         model=req.model or "deepseek-ai/deepseek-r1",
     )
 
@@ -1595,7 +1599,6 @@ class AIExplainRequest(BaseModel):
     primitive: str = Field(min_length=1, max_length=100)
     issue: str = Field(default="", max_length=200)
     code_context: Optional[str] = None
-    nvidia_api_key: Optional[str] = None
 
 
 @router.post('/ai/explain')
@@ -1604,7 +1607,6 @@ def ai_explain_endpoint(req: AIExplainRequest):
         primitive=req.primitive,
         issue=req.issue,
         code_context=req.code_context,
-        api_key=req.nvidia_api_key,
     )
 
 

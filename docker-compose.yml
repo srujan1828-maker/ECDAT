@@ -5,6 +5,8 @@ services:
       ECDAT_DB: /data/scans.sqlite3
       ECDAT_API_TOKEN: ${ECDAT_API_TOKEN:-}
       ECDAT_ALLOWED_CIDRS: ${ECDAT_ALLOWED_CIDRS:-}
+      # Configure this server-side; it is never sent from the browser.
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     volumes:
       - scan-data:/data

@@ -17,7 +17,6 @@ import {
   History,
   CheckCircle2,
   CircleHelp,
-  Settings2,
   Search,
   X,
   LoaderCircle,
@@ -162,7 +161,6 @@ export default function Dashboard() {
   const [projectInput, setProjectInput] = useState("default");
   const [project, setProject] = useState("default");
   const [token, setToken] = useState("");
-  const [nvidiaKey, setNvidiaKey] = useState("");
   const [mode, setMode] = useState<"network" | "code" | "binary" | "pcap">("network");
   const [target, setTarget] = useState("");
   const [language, setLanguage] = useState("python");
@@ -182,11 +180,6 @@ export default function Dashboard() {
   );
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedKey = localStorage.getItem("ecdat_nvidia_api_key");
-      if (savedKey) setNvidiaKey(savedKey);
-    }
-
     function readHash() {
       const hash = window.location.hash.slice(1);
       if (hash === "migration") setView("migration");
@@ -594,48 +587,23 @@ export default function Dashboard() {
               Keep related scans together in a project.
             </p>
           </details>
-          <details className="mt-4 border-t border-subtle pt-3">
-            <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-quiet">
-              <Settings2 size={13} />
-              Connection settings
-            </summary>
-            <label className="mt-3 block text-xs text-quiet">
-              Access token
-              <input
-                type="password"
-                autoComplete="off"
-                aria-label="Backend access token"
-                placeholder="Only if required"
-                className={`${inputClass} mt-2 !text-xs`}
-                value={token}
-                onChange={(e) => {
-                  setToken(e.target.value);
-                  setError("");
-                }}
-              />
-            </label>
-            <label className="mt-3 block text-xs text-quiet">
-              NVIDIA NIM API Key (DeepSeek-R1)
-              <input
-                type="password"
-                autoComplete="off"
-                aria-label="NVIDIA NIM API Key"
-                placeholder="nvapi-... (for DeepSeek-R1 PQC Refactoring)"
-                className={`${inputClass} mt-2 !text-xs font-mono`}
-                value={nvidiaKey}
-                onChange={(e) => {
-                  setNvidiaKey(e.target.value);
-                  if (typeof window !== "undefined") {
-                    localStorage.setItem("ecdat_nvidia_api_key", e.target.value.trim());
-                  }
-                }}
-              />
-            </label>
-            <p className="mt-2 text-[11px] leading-relaxed text-quiet">
-              Kept only for this page session. Projects share the same access
-              token and NVIDIA NIM key.
-            </p>
-          </details>
+          <label className="mt-4 block border-t border-subtle pt-3 text-xs text-quiet">
+            Access token
+            <input
+              type="password"
+              autoComplete="off"
+              aria-label="Backend access token"
+              placeholder="Only if required"
+              className={`${inputClass} mt-2 !text-xs`}
+              value={token}
+              onChange={(e) => { setToken(e.target.value); setError(""); }}
+            />
+          </label>
+          <div className="mt-3 text-[11px] leading-relaxed text-quiet">
+            AI refactoring uses the server&apos;s NVIDIA NIM configuration. Keep
+            <code className="mx-1 rounded bg-canvas px-1 py-0.5 font-mono text-[10px] text-foreground">NVIDIA_API_KEY</code>
+            in the backend environment; no API key is stored in the browser.
+          </div>
         </div>
       </aside>
 
