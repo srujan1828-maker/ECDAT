@@ -22,6 +22,8 @@ services:
     build: ./frontend
     environment:
       BACKEND_API_URL: http://backend:8000/api
+      # The Next.js server injects this secret into upstream API requests.
+      ECDAT_API_TOKEN: ${ECDAT_API_TOKEN:-}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
