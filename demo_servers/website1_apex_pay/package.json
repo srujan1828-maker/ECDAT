@@ -1,0 +1,14 @@
+{
+  "name": "apexpay-demo",
+  "version": "1.0.0",
+  "description": "ApexPay Enterprise Banking & Payment Gateway Demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --openssl-legacy-provider server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "ECDAT Team",
+  "license": "MIT"
+}
