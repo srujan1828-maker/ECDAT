@@ -631,11 +631,19 @@ export function ScanStudio({
                   Select Project Folder (Auto-excludes node_modules, .git, dist, __pycache__)
                 </label>
                 <input
+                  id="source-project-folder"
                   type="file"
                   {...({ webkitdirectory: "", directory: "", multiple: true } as any)}
                   onChange={(e) => handleFolderSelected(e.target.files)}
-                  className="w-full text-xs file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-cyan-500/10 file:text-cyan-400 hover:file:bg-cyan-500/20 cursor-pointer"
+                  className="sr-only"
                 />
+                <label
+                  htmlFor="source-project-folder"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-400 hover:bg-cyan-500/20"
+                >
+                  <Folder className="h-4 w-4" />
+                  Choose Project Folder
+                </label>
                 {folderFiles.length > 0 && (
                   <div className="p-3.5 rounded-lg bg-canvas border border-subtle space-y-1 text-xs">
                     <div className="font-mono text-cyan-400 font-semibold flex items-center justify-between">

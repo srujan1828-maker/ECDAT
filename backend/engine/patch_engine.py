@@ -730,7 +730,11 @@ class AutoPatchEngine:
         return patch
 
     @staticmethod
-    def patch_entire_codebase(files: list[dict], workspace_root: Optional[str] = None) -> dict:
+    def patch_entire_codebase(
+        files: list[dict],
+        workspace_root: Optional[str] = None,
+        selected_patterns: Optional[List[str]] = None,
+    ) -> dict:
         """Analyzes and automatically patches an entire multi-file codebase (backend + frontend)."""
         from .source_scan import normalize_language
         patched_files = []
@@ -754,7 +758,9 @@ class AutoPatchEngine:
             findings = pre_res.get('findings', [])
 
             # ALWAYS attempt patching - never gated by if findings
-            patch = AutoPatchEngine.create_patch(content, raw_path, lang)
+            patch = AutoPatchEngine.create_patch(
+                content, raw_path, lang, selected_patterns=selected_patterns
+            )
             if patch and patch.patched_code != content:
                 tested = AutoPatchEngine.run_regression_test(patch)
                 findings_count = max(len(findings), len(tested.pattern_id.split('+')))

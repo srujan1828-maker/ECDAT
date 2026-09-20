@@ -134,6 +134,10 @@ export function AutoPatchShowpiece({
         const res = await fetch(`/api/scans/${selectedScanId}/result?project=${encodeURIComponent(projectId)}`);
         if (res.ok) {
           const data = await res.json();
+          if ((data.source_file_count || 0) > 1) {
+            setSourceCode("");
+            setFileName("project");
+          }
           if (data.source_code) {
             setSourceCode(data.source_code);
           }
@@ -217,7 +221,7 @@ export function AutoPatchShowpiece({
 
       setTerminalLogs(logs);
 
-      setPatchResult(data);
+      setPatchResult({ ...data, selected_patterns: checkedPatterns });
     } catch (err: any) {
       setTerminalLogs((curr) => [
         ...curr,
@@ -250,6 +254,37 @@ export function AutoPatchShowpiece({
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Download the complete uploaded project with patched files replaced in
+  // place and every unaffected file preserved at its original relative path.
+  const handleDownloadProject = async () => {
+    if (!patchResult?.project_archive_available) return;
+    try {
+      const res = await fetch("/api/patch/from-scan/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scan_id: selectedScanId,
+          project_id: projectId,
+          selected_patterns: patchResult.selected_patterns || [],
+          file_path: fileName,
+        }),
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.detail || "Failed to build patched project archive");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ecdat_patched_project.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setTerminalLogs((current) => [...current, `[ ERROR ] ${err.message || String(err)}`]);
+    }
   };
 
   // Render Split Diff lines
@@ -573,13 +608,24 @@ export function AutoPatchShowpiece({
                 <span>Download .patch</span>
               </button>
 
+              {patchResult.project_file_count === 1 && (
+                <button
+                  type="button"
+                  onClick={handleDownloadFile}
+                  className="px-3.5 py-2 rounded-lg bg-canvas hover:bg-surface border border-subtle text-xs font-semibold flex items-center gap-1.5 text-foreground"
+                >
+                  <FileCode className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Download Patched File</span>
+                </button>
+              )}
+
               <button
                 type="button"
-                onClick={handleDownloadFile}
-                className="px-3.5 py-2 rounded-lg bg-canvas hover:bg-surface border border-subtle text-xs font-semibold flex items-center gap-1.5 text-foreground"
+                onClick={handleDownloadProject}
+                className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5"
               >
-                <FileCode className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Download Patched File</span>
+                <Download className="h-3.5 w-3.5" />
+                <span>Download Entire Patched Project (.zip)</span>
               </button>
             </div>
 
