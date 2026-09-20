@@ -46,6 +46,41 @@ interface FindingItem {
   checked: boolean;
 }
 
+function patchPatternFor(primitive: string, language: string): string | null {
+  const value = primitive.toUpperCase();
+  const lang = language.toLowerCase();
+  if (lang === "python") {
+    if (value.includes("MD5")) return "MD5_TO_SHA256_PYTHON";
+    if (value.includes("SHA-1") || value.includes("SHA1")) return "SHA1_TO_SHA256_PYTHON";
+    if (value.includes("RSA-1024") || value.includes("RSA-512")) return "RSA_1024_UPGRADE_PYTHON";
+    if (value === "DES") return "DES_TO_AES_PYTHON";
+  }
+  if (lang === "javascript") {
+    if (value.includes("MD5")) return "MD5_TO_SHA256_JS";
+    if (value.includes("SHA-1") || value.includes("SHA1")) return "SHA1_TO_SHA256_JS";
+    if (value.includes("RSA-1024") || value.includes("RSA-512")) return "RSA_1024_UPGRADE_JS";
+  }
+  if (lang === "c_cpp") {
+    if (value.includes("MD5")) return "MD5_TO_SHA256_C";
+    if (value.includes("SHA-1") || value.includes("SHA1")) return "SHA1_TO_SHA256_C";
+    if (value === "DES") return "DES_TO_AES_C";
+    if (value.includes("RSA-1024") || value.includes("RSA-512")) return "RSA_GENERATE_C";
+  }
+  if (lang === "java") {
+    if (value.includes("MD5")) return "MD5_TO_SHA256_JAVA";
+    if (value.includes("SHA-1") || value.includes("SHA1")) return "SHA1_TO_SHA256_JAVA";
+    if (value.includes("RSA-1024") || value.includes("RSA-512")) return "RSA_1024_JAVA";
+    if (value === "DES") return "DES_TO_AES_JAVA";
+  }
+  if (lang === "golang") {
+    if (value.includes("MD5")) return "MD5_TO_SHA256_GO";
+    if (value.includes("SHA-1") || value.includes("SHA1")) return "SHA1_TO_SHA256_GO";
+    if (value.includes("RSA-1024") || value.includes("RSA-512")) return "RSA_1024_GO";
+    if (value === "DES") return "DES_TO_AES_GO";
+  }
+  return null;
+}
+
 export function AutoPatchShowpiece({
   projectId,
   onNavigateToVerify,
@@ -75,11 +110,10 @@ export function AutoPatchShowpiece({
         const res = await fetch(`/api/scans?project=${encodeURIComponent(projectId)}`);
         if (res.ok) {
           const data = await res.json();
-          const completed = data.filter((s: any) => s.status === "completed");
+          const completed = data.filter((s: any) => s.status === "completed" && s.kind === "code");
           setScans(completed);
           if (!selectedScanId && completed.length > 0) {
-            const codeScan = completed.find((s: any) => s.kind === "code") || completed[0];
-            setSelectedScanId(codeScan.id);
+            setSelectedScanId(completed[0].id);
           }
         }
       } catch (err) {
@@ -105,11 +139,11 @@ export function AutoPatchShowpiece({
           }
           if (data.findings && data.findings.length > 0) {
             const items: FindingItem[] = data.findings.map((f: any, idx: number) => {
-              const algo = f.algorithm || "Unknown";
+              const algo = f.primitive || f.algorithm || "Unknown";
               const line = f.line || 1;
               const codeSnippet = f.code || "";
-              const replacement = f.recommended_replacement || "NIST PQC Standard";
-              const pattern = f.patch_pattern || "MD5_TO_SHA256_PYTHON";
+              const replacement = f.nist_recommendation || f.recommended_replacement || "NIST PQC Standard";
+              const pattern = f.patch_pattern || patchPatternFor(algo, f.language || "python");
 
               return {
                 id: `finding-${idx}-${line}`,
@@ -117,8 +151,8 @@ export function AutoPatchShowpiece({
                 line: line,
                 code: codeSnippet,
                 replacement: replacement,
-                pattern_id: pattern,
-                checked: true,
+                pattern_id: pattern || "",
+                checked: Boolean(pattern),
               };
             });
             setFindings(items);
@@ -143,7 +177,7 @@ export function AutoPatchShowpiece({
     );
   };
 
-  // Run Auto Patch with simulated terminal log streaming
+  // Run the backend patcher and display its real execution log.
   const handleGeneratePatches = async () => {
     if (!selectedScanId) return;
     setIsPatching(true);
@@ -175,21 +209,13 @@ export function AutoPatchShowpiece({
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Auto patch failed: ${res.statusText}`);
-      }
-
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || `Auto patch failed: ${res.statusText}`);
+      }
       const logs = data.execution_logs || [];
 
-      // Animate terminal log appearance line by line
-      for (let i = 0; i < logs.length; i++) {
-        await new Promise((r) => setTimeout(r, 220));
-        setTerminalLogs((curr) => [...curr, logs[i]]);
-        if (terminalEndRef.current) {
-          terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
-        }
-      }
+      setTerminalLogs(logs);
 
       setPatchResult(data);
     } catch (err: any) {
@@ -560,11 +586,11 @@ export function AutoPatchShowpiece({
             {onNavigateToVerify && (
               <button
                 type="button"
-                onClick={() => onNavigateToVerify(selectedScanId)}
+                onClick={() => onNavigateToVerify(selectedScanId, patchResult.post_migration_scan_id)}
                 className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-600/20"
               >
                 <ShieldCheck className="h-4 w-4" />
-                <span>Run Verification Scan</span>
+                <span>Review Verification</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
             )}

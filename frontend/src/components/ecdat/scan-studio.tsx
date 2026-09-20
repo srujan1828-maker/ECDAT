@@ -289,11 +289,10 @@ export function ScanStudio({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            repo_url: normalizedUrl,
+            url: normalizedUrl,
             token: token.trim() || null,
-            branch: branch.trim() || null,
-            subdir: subdir.trim() || null,
-            project_id: projectId,
+            ref: branch.trim() || null,
+            subpath: subdir.trim() || null,
           }),
         });
 

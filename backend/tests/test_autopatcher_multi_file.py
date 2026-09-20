@@ -124,7 +124,7 @@ public class SecurityProvider {
     py_patch = next(p for p in result["patched_files"] if p["path"] == "services/payment.py")
     assert "hashlib.sha256" in py_patch["patched_code"]
     assert "3072" in py_patch["patched_code"]
-    assert py_patch["verification_status"] in ("passed", "simulated_pass")
+    assert py_patch["verification_status"] in ("passed", "static_verified")
 
     # Gateway C check
     c_patch = next(p for p in result["patched_files"] if p["path"] == "core/gateway.c")
