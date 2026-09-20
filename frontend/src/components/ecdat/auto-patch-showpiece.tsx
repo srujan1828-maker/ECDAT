@@ -273,6 +273,33 @@ export function AutoPatchShowpiece({
     document.body.appendChild(a);
     a.click();
     a.remove();
+  const handleDownloadProject = async () => {
+    if (!patchResult?.project_archive_available) return;
+    try {
+      const res = await fetch("/api/patch/from-scan/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scan_id: selectedScanId,
+          project_id: projectId,
+          selected_patterns: patchResult.selected_patterns || [],
+          file_path: fileName,
+        }),
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.detail || "Failed to build patched project archive");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ecdat_patched_project.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setTerminalLogs((current) => [...current, `[ ERROR ] ${err.message || String(err)}`]);
+    }
   };
 
   // Render Split Diff lines
