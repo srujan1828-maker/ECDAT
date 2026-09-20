@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import threading
 from typing import Any, Dict, List, Optional
@@ -36,6 +37,16 @@ class ScanStore:
             db.execute('''CREATE TABLE IF NOT EXISTS migration_plans (
                 id TEXT PRIMARY KEY, project TEXT NOT NULL, created_at TEXT NOT NULL,
                 result TEXT NOT NULL)''')
+            db.execute('''CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+                organization TEXT, environment TEXT NOT NULL,
+                business_criticality TEXT NOT NULL, data_sensitivity TEXT NOT NULL,
+                data_lifetime_years INTEGER NOT NULL, migration_target_date TEXT,
+                owner TEXT, tags TEXT NOT NULL, is_demo INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL)''')
+            db.execute('''CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+                role TEXT NOT NULL, password_hash TEXT NOT NULL, created_at TEXT NOT NULL)''')
 
             # 2. ECDAT V4 Reproducibility Manifests
             db.execute('''CREATE TABLE IF NOT EXISTS scan_manifests (
@@ -166,6 +177,8 @@ class ScanStore:
 
             # Mark interrupted jobs as failed on restart
             db.execute("UPDATE scans SET status='failed', error='Worker interrupted; submit again', finished_at=? WHERE status IN ('queued','running')", (now(),))
+            self._ensure_default_project(db)
+            self._ensure_demo_user(db)
 
         self.graph = AssetGraphService(self.connect)
         self.fusion = EvidenceFusionEngine(self.graph)
@@ -177,6 +190,122 @@ class ScanStore:
         db.execute('PRAGMA journal_mode = WAL;')
         return db
 
+    @staticmethod
+    def _ensure_default_project(db):
+        timestamp = now()
+        db.execute(
+            '''INSERT OR IGNORE INTO projects VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            ('default', 'ECDAT Default Project', 'Default cryptographic discovery workspace',
+             'ECDAT', 'Production', 'Critical', 'Sensitive', 20, '2030-01-01',
+             'Security Team', '["default"]', 1, timestamp, timestamp),
+        )
+
+    @classmethod
+    def _ensure_demo_user(cls, db):
+        timestamp = now()
+        db.execute(
+            'INSERT OR IGNORE INTO users VALUES (?,?,?,?,?,?)',
+            ('admin', 'admin@ecdat.local', 'ECDAT Administrator', 'OWNER',
+             cls._hash_password('admin123'), timestamp),
+        )
+
+    @staticmethod
+    def _hash_password(password, salt=None):
+        salt_bytes = bytes.fromhex(salt) if salt else os.urandom(16)
+        digest = hashlib.pbkdf2_hmac('sha256', password.encode(), salt_bytes, 240_000)
+        return f'{salt_bytes.hex()}:{digest.hex()}'
+
+    def authenticate_user(self, email, password):
+        with self.connect() as db:
+            row = db.execute('SELECT * FROM users WHERE lower(email)=lower(?)', (email,)).fetchone()
+        if not row:
+            return None
+        salt, _ = row['password_hash'].split(':', 1)
+        if not secrets.compare_digest(self._hash_password(password, salt), row['password_hash']):
+            return None
+        return {key: row[key] for key in ('id', 'email', 'name', 'role')}
+
+    def create_user(self, email, name, role, password):
+        user_id = str(uuid.uuid4())
+        try:
+            with self.connect() as db:
+                db.execute('INSERT INTO users VALUES (?,?,?,?,?,?)',
+                           (user_id, email.lower(), name, role, self._hash_password(password), now()))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError('An account with this email already exists') from exc
+        return {'id': user_id, 'email': email.lower(), 'name': name, 'role': role}
+
+    def list_projects(self):
+        with self.connect() as db:
+            rows = db.execute('SELECT * FROM projects ORDER BY created_at DESC').fetchall()
+        return [self._project_dict(row) for row in rows]
+
+    def get_project(self, project_id):
+        with self.connect() as db:
+            row = db.execute('SELECT * FROM projects WHERE id=?', (project_id,)).fetchone()
+        return self._project_dict(row) if row else None
+
+    def save_project(self, value, create=False):
+        project_id = value['id']
+        existing = self.get_project(project_id)
+        if create and existing:
+            raise ValueError('Project already exists')
+        timestamp = now()
+        merged = {
+            'id': project_id,
+            'name': project_id,
+            'description': '',
+            'organization': '',
+            'environment': 'Production',
+            'business_criticality': 'Unknown',
+            'data_sensitivity': 'Unknown',
+            'data_lifetime_years': 10,
+            'migration_target_date': None,
+            'owner': None,
+            'tags': [],
+            'is_demo': False,
+            'created_at': timestamp,
+            **(existing or {}),
+            **value,
+            'updated_at': timestamp,
+        }
+        with self.connect() as db:
+            db.execute(
+                '''INSERT OR REPLACE INTO projects
+                   (id,name,description,organization,environment,business_criticality,
+                    data_sensitivity,data_lifetime_years,migration_target_date,owner,tags,
+                    is_demo,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (merged['id'], merged['name'], merged['description'], merged['organization'],
+                 merged['environment'], merged['business_criticality'], merged['data_sensitivity'],
+                 merged['data_lifetime_years'], merged['migration_target_date'], merged['owner'],
+                 json.dumps(merged['tags']), int(merged['is_demo']), merged['created_at'], timestamp),
+            )
+        return self.get_project(project_id)
+
+    def _project_dict(self, row):
+        value = dict(row)
+        value['tags'] = json.loads(value.get('tags') or '[]')
+        value['is_demo'] = bool(value.get('is_demo'))
+        with self.connect() as db:
+            scan_row = db.execute(
+                'SELECT count(*) count, max(created_at) last_scan_at FROM scans WHERE project=?',
+                (value['id'],),
+            ).fetchone()
+            asset_count = db.execute(
+                'SELECT count(*) FROM crypto_assets WHERE project=?', (value['id'],)
+            ).fetchone()[0]
+            risk_count = db.execute(
+                "SELECT count(*) FROM crypto_assets WHERE project=? AND lower(coalesce(algorithm,'')) IN ('rsa','ecdsa','dh','ecdh')",
+                (value['id'],),
+            ).fetchone()[0]
+        value['metrics'] = {
+            'asset_count': asset_count,
+            'scan_count': scan_row['count'],
+            'quantum_risk_count': risk_count,
+            'last_scan_at': scan_row['last_scan_at'],
+        }
+        return value
+
     def submit(self, project, kind, payload, worker):
         encoded = json.dumps(payload, sort_keys=True)
         scan_id = str(uuid.uuid4())
@@ -187,7 +316,7 @@ class ScanStore:
                 raise ValueError('Scan queue is full; retry later')
             db.execute('INSERT INTO scans VALUES (?,?,?,?,?,?,?,?,?,?)',
                        (scan_id, project, kind, 'queued', now(), None,
-                        input_hash, None, None, None))
+                        input_hash, encoded, None, None))
         self.pool.submit(self._run, scan_id, project, payload, input_hash, worker)
         return self.get(scan_id, project)
 
@@ -315,10 +444,18 @@ class ScanStore:
         value['engine_version'] = '4.0.0'
         return value
 
-    def list(self, project):
+    def list(self, project, status=None):
         with self.connect() as db:
-            ids = db.execute('SELECT id FROM scans WHERE project=? ORDER BY created_at DESC LIMIT 200', (project,)).fetchall()
+            if status:
+                ids = db.execute('SELECT id FROM scans WHERE project=? AND status=? ORDER BY created_at DESC LIMIT 200', (project, status)).fetchall()
+            else:
+                ids = db.execute('SELECT id FROM scans WHERE project=? ORDER BY created_at DESC LIMIT 200', (project,)).fetchall()
         return [self.get(row['id'], project) for row in ids]
+
+    def get_payload(self, scan_id, project):
+        with self.connect() as db:
+            row = db.execute('SELECT payload FROM scans WHERE id=? AND project=?', (scan_id, project)).fetchone()
+        return json.loads(row['payload']) if row and row['payload'] else None
 
     def cancel(self, scan_id, project):
         with self.connect() as db:
@@ -497,6 +634,3 @@ class ScanStore:
 
     def close(self):
         self.pool.shutdown(wait=True)
-
-
-
