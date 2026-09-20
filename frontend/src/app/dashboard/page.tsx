@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Binary,
@@ -35,6 +35,8 @@ import { SihDemoPanel } from "@/components/ecdat/sih-demo-panel";
 import { JudgeDemoPanel } from "@/components/ecdat/judge-demo-panel";
 import { FeatureScanHistory } from "@/components/ecdat/feature-scan-history";
 import { AutonomousLoopPanel } from "@/components/ecdat/autonomous-loop-panel";
+import { toast } from "@/components/ui/toast";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const inputClass =
   "w-full min-w-0 rounded-md border border-subtle bg-canvas px-3 py-2.5 text-sm text-foreground placeholder:text-quiet outline-none transition-colors focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15";
@@ -131,9 +133,9 @@ function StatusBadge({ status }: { status: Scan["status"] }) {
     <span
       className={`inline-flex shrink-0 items-center gap-1.5 rounded border px-2 py-1 text-[11px] font-medium ${color}`}
     >
-      {status === "running" && (
-        <LoaderCircle size={11} className="motion-safe:animate-spin" />
-      )}
+      {status === "running" || status === "queued" ? (
+        <span className="scan-progress-ring" aria-hidden="true"><LoaderCircle size={9} className="motion-safe:animate-spin" /></span>
+      ) : null}
       {
         {
           completed: "Completed",
@@ -175,9 +177,10 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [exportIds, setExportIds] = useState<string[]>([]);
-  const [historyFilter, setHistoryFilter] = useState<"all" | Scan["kind"]>(
-    "all",
-  );
+  const [historyFilter, setHistoryFilter] = useState<"all" | Scan["kind"]>("all");
+  const [loadingScans, setLoadingScans] = useState(true);
+  const knownCompleted = useRef(new Set<string>());
+  const hasLoadedScans = useRef(false);
 
   useEffect(() => {
     function readHash() {
@@ -219,8 +222,18 @@ export default function Dashboard() {
       try {
         const records = await requestApi<Scan[]>("/scans", project, token);
         if (active) {
+          const completedIds = records.filter((scan) => scan.status === "completed").map((scan) => scan.id);
+          if (hasLoadedScans.current) {
+            completedIds.filter((id) => !knownCompleted.current.has(id)).forEach((id) => {
+              const scan = records.find((item) => item.id === id);
+              toast.add({ type: "success", title: "Scan complete", description: `${scan?.kind ?? "Discovery"} evidence is ready to review.` });
+            });
+          }
+          knownCompleted.current = new Set(completedIds);
+          hasLoadedScans.current = true;
           setScans(records);
           setConnected(true);
+          setLoadingScans(false);
         }
       } catch (err) {
         if (active) {
@@ -341,6 +354,7 @@ export default function Dashboard() {
         }
       }
       const scan = await requestApi<Scan>(path, project, token, body);
+      toast.add({ type: "info", title: "Scan queued", description: "ECDAT will notify you when evidence is ready." });
       setSelected(scan.id);
       await refresh();
     } catch (err) {
@@ -365,6 +379,7 @@ export default function Dashboard() {
       link.download = `${project}-cbom.json`;
       link.click();
       URL.revokeObjectURL(url);
+      toast.add({ type: "success", title: "CBOM exported", description: "Your consolidated report download has started." });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -754,6 +769,11 @@ export default function Dashboard() {
                   </button>
                 </div>
               )}
+              {loadingScans ? (
+                <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Loading scan status">
+                  {Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-28 rounded-lg" />)}
+                </div>
+              ) : (
               <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
                 {[
                   {
@@ -797,6 +817,7 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              )}
 
               <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_260px]">
                 <section
