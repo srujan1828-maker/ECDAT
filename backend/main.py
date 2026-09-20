@@ -2190,32 +2190,20 @@ def patch_from_scan(req: PatchFromScanRequest, request: Request):
         'project_file_count': len(files),
         'project_archive_available': True,
     }
+    remediated_count = patch_result['summary']['vulnerabilities_remediated']
+    post_scan_id = post_scan['id']
+    execution_logs = [
+        '[ SCAN ] Loaded completed scan {}'.format(req.scan_id[:8]),
+        '[ PATCH ] Patched {} of {} project files'.format(len(patched_files), len(files)),
+        '[ VERIFY ] Remediated {} findings with real regression/static checks'.format(remediated_count),
+        '[ RESCAN ] Queued post-migration scan {}'.format(post_scan_id[:8]),
+    ]
     value.update({
-        'total_patched': patch_result['summary']['vulnerabilities_remediated'],
+        'total_patched': remediated_count,
         'baseline_scan_id': req.scan_id,
-        'post_migration_scan_id': post_scan['id'],
+        'post_migration_scan_id': post_scan_id,
         'applied': True,
-        'execution_logs': [
-            f'[ SCAN ] Loaded completed scan {req.scan_id[:8]}',
-            f"[ PATCH ] Patched {len(patched_files)} of {len(files)} project files",
-            f"[ VERIFY ] Remediated {patch_result['summary']['vulnerabilities_remediated']} findings with real regression/static checks",
-            f"[ RESCAN ] Queued post-migration scan {post_scan['id'][:8]}",
-    source = req.override_code or (files[0].get('content', '') if files else '')
-    if not source:
-        raise HTTPException(422, 'The scan does not contain source code that can be patched')
-    language = files[0].get('language', 'python') if files else 'python'
-    patch = AutoPatchEngine.create_patch(source, req.file_path, language)
-    if patch is None:
-        raise HTTPException(404, 'No applicable safe migration template matched the scan')
-    patch = AutoPatchEngine.run_regression_test(patch)
-    value = patch.model_dump()
-    value.update({
-        'total_patched': 1,
-        'execution_logs': [
-            f'[ SCAN ] Loaded completed scan {req.scan_id[:8]}',
-            f'[ PATCH ] Applied deterministic template {patch.pattern_id}',
-            f'[ TEST ] Regression verification {patch.verification_status}',
-        ],
+        'execution_logs': execution_logs,
     })
     return value
 
@@ -2278,7 +2266,6 @@ def run_custom_loop(req: CustomLoopRequest, request: Request):
     result = {
         'run_id': str(uuid.uuid4()), 'target_name': req.file_name,
         'verdict': 'VERIFIED' if not regressions and patch.verification_status in ('passed', 'static_verified') else 'NOT_VERIFIED',
-        'verdict': 'VERIFIED' if not regressions and patch.verification_status in ('passed', 'simulated_pass') else 'NOT_VERIFIED',
         'total_duration_ms': round((time.perf_counter() - started) * 1000),
         'before_state': {'code': req.source_code, 'critical_vulnerabilities': len(before_findings), 'security_score': max(0, 100 - len(before_findings) * 20), 'quantum_deficit_years': 13 if before_findings else 0, 'crypto_agility_score': 2.5},
         'after_state': {'code': patch.patched_code, 'critical_vulnerabilities': len(after_findings), 'security_score': max(0, 100 - len(after_findings) * 20), 'quantum_deficit_years': 0 if not after_findings else 13, 'crypto_agility_score': 7.5},

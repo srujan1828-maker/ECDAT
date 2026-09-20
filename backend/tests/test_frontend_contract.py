@@ -1,7 +1,6 @@
 import io
 import time
 import zipfile
-import time
 
 
 def _finish(client, response, project="default"):
