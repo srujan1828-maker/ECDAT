@@ -53,10 +53,19 @@ async function forward(
     const headers = new Headers();
     request.headers.forEach((value, key) => {
       const lower = key.toLowerCase();
-      if (!['host', 'connection', 'content-length', 'transfer-encoding'].includes(lower)) {
+      if (!['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding'].includes(lower)) {
         headers.set(key, value);
       }
     });
+    // Node's fetch transparently decompresses upstream responses. Requesting
+    // identity encoding avoids ever pairing a decompressed body with stale
+    // compressed metadata from an intermediary/CDN.
+    headers.set('accept-encoding', 'identity');
+    // The API token is a server-side deployment secret. Inject it in the
+    // proxy rather than exposing it through NEXT_PUBLIC_* browser variables.
+    if (!headers.has('authorization') && process.env.ECDAT_API_TOKEN) {
+      headers.set('authorization', `Bearer ${process.env.ECDAT_API_TOKEN}`);
+    }
 
     const upstream = await fetch(url, {
       method: request.method,
@@ -75,12 +84,20 @@ async function forward(
       );
     }
 
+    const responseHeaders = new Headers({
+      'Content-Type': contentType || 'application/json',
+      'Cache-Control': 'no-store',
+    });
+    // Content-Length must not be copied: fetch may have decompressed the body,
+    // in which case the upstream byte count is no longer correct and browsers
+    // can receive truncated JSON (for example, "Unterminated string").
+    for (const name of ['content-disposition']) {
+      const value = upstream.headers.get(name);
+      if (value) responseHeaders.set(name, value);
+    }
     return new Response(upstream.body, {
       status: upstream.status,
-      headers: {
-        'Content-Type': contentType || 'application/json',
-        'Cache-Control': 'no-store',
-      },
+      headers: responseHeaders,
     });
   } catch (err: any) {
     return Response.json(
@@ -95,4 +112,3 @@ export const POST = forward;
 export const PATCH = forward;
 export const DELETE = forward;
 export const PUT = forward;
-
