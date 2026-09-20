@@ -1,9 +1,13 @@
 "use client";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import {
-  Area,
-  AreaChart,
+  Line,
+  LineChart,
   CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   XAxis,
   YAxis,
@@ -101,6 +105,12 @@ export function Overview({
         : "Controlled";
   const quantumReadiness = complete.length ? Math.max(18, 100 - riskScore) : 0;
   const migrationReadiness = complete.length ? Math.max(12, 86 - riskScore) : 0;
+  const severityChartData = [
+    { name: "Critical", value: severityCounts.critical, color: "#ef4444" },
+    { name: "High", value: severityCounts.high, color: "#f97316" },
+    { name: "Medium", value: severityCounts.medium, color: "#eab308" },
+    { name: "Low", value: severityCounts.low, color: "#22c55e" },
+  ].filter((item) => item.value > 0);
   const data = useMemo(
     () =>
       Array.from({ length: days }, (_, i) => {
@@ -351,7 +361,7 @@ export function Overview({
           ) : (
             <div className="activity-chart">
               <ResponsiveContainer width="100%" height={210}>
-                <AreaChart
+                <LineChart
                   data={data}
                   margin={{ top: 15, right: 16, left: -20, bottom: 0 }}
                 >
@@ -381,17 +391,17 @@ export function Overview({
                       borderRadius: 8,
                     }}
                   />
-                  <Area
+                  <Line
                     dataKey="scans"
                     name="Scans submitted"
-                    type="linear"
+                    type="monotone"
                     stroke="var(--teal)"
                     strokeWidth={2}
-                    fill="var(--teal)"
-                    fillOpacity={0.12}
+                    dot={{ fill: "var(--teal)", r: 3 }}
+                    activeDot={{ r: 5 }}
                     isAnimationActive={false}
                   />
-                </AreaChart>
+                </LineChart>
               </ResponsiveContainer>
             </div>
           )}
@@ -422,7 +432,15 @@ export function Overview({
               <p>Completed scans by type</p>
             </div>
           </div>
-          <div className="coverage-bars">
+          {!severityChartData.length ? (
+            <div className="chart-empty">
+              <ShieldAlert size={28} />
+              <strong>No findings to chart</strong>
+              <p>Severity distribution appears after a completed scan records findings.</p>
+            </div>
+          ) : (
+            <div className="grid items-center gap-3 sm:grid-cols-[minmax(0,1fr)_150px]">
+              <div className="coverage-bars">
             {(
               [
                 { kind: "network", label: "Network", Icon: Globe2 },
@@ -452,7 +470,22 @@ export function Overview({
               Scan counts show activity, not security coverage or readiness.
               Open each result to review skipped checks.
             </p>
-          </div>
+              </div>
+              <div className="h-[160px]" aria-label="Finding severity distribution">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={severityChartData} dataKey="value" nameKey="name" innerRadius={42} outerRadius={66} paddingAngle={3} isAnimationActive={false}>
+                      {severityChartData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8 }}
+                    />
+                    <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </section>
       </div>
       <section className="ec-panel">
