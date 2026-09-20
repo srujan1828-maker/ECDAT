@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: ecdat-demo-apexpay
+    runtime: node
+    rootDir: demo_servers/website1_apex_pay
+    buildCommand: ""
+    startCommand: node --openssl-legacy-provider server.js
+    envVars:
+      - key: NODE_OPTIONS
+        value: --openssl-legacy-provider
+
+  - type: web
+    name: ecdat-demo-medvault
+    runtime: node
+    rootDir: demo_servers/website2_med_vault
+    buildCommand: ""
+    startCommand: node --openssl-legacy-provider server.js
+    envVars:
+      - key: NODE_OPTIONS
+        value: --openssl-legacy-provider
+
+  - type: web
+    name: ecdat-demo-ciphercloud
+    runtime: node
+    rootDir: demo_servers/website3_cipher_cloud
+    buildCommand: ""
+    startCommand: node --openssl-legacy-provider server.js
+    envVars:
+      - key: NODE_OPTIONS
+        value: --openssl-legacy-provider

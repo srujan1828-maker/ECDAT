@@ -1,0 +1,14 @@
+{
+  "name": "ciphercloud-demo",
+  "version": "1.0.0",
+  "description": "CipherCloud Enterprise Storage & Document Locker Demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --openssl-legacy-provider server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "ECDAT Team",
+  "license": "MIT"
+}

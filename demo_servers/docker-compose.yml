@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  apexpay:
+    build:
+      context: ./website1_apex_pay
+      dockerfile: Dockerfile
+    container_name: demo_apexpay
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - NODE_OPTIONS=--openssl-legacy-provider
+
+  medvault:
+    build:
+      context: ./website2_med_vault
+      dockerfile: Dockerfile
+    container_name: demo_medvault
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      - PORT=8082
+      - NODE_OPTIONS=--openssl-legacy-provider
+
+  ciphercloud:
+    build:
+      context: ./website3_cipher_cloud
+      dockerfile: Dockerfile
+    container_name: demo_ciphercloud
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    environment:
+      - PORT=8083
+      - NODE_OPTIONS=--openssl-legacy-provider

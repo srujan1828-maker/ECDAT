@@ -1,0 +1,32 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      ECDAT_DB: /data/scans.sqlite3
+      ECDAT_API_TOKEN: ${ECDAT_API_TOKEN:-}
+      ECDAT_ALLOWED_CIDRS: ${ECDAT_ALLOWED_CIDRS:-}
+      # Configure this server-side; it is never sent from the browser.
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - scan-data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_API_URL: http://backend:8000/api
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  scan-data:
