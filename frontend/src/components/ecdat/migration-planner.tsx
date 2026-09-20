@@ -71,6 +71,7 @@ export function MigrationPlanner({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [hasTraffic, setHasTraffic] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1);
   const [form, setForm] = useState({
     current_host: "",
     target_host: "",
@@ -197,6 +198,12 @@ export function MigrationPlanner({
       )}
       <div className="planner-layout">
         <div>
+          <nav className="mb-4 grid grid-cols-3 gap-2" aria-label="Migration planning steps">
+            {["Evidence", "Environment", "Traffic"].map((label, index) => {
+              const step = index + 1;
+              return <button key={label} type="button" onClick={() => setWizardStep(step)} className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors ${wizardStep === step ? "border-cyan-500/40 bg-cyan-500/10 text-teal" : "border-subtle bg-surface text-quiet hover:bg-surface-raised"}`}><span className="mr-1.5 font-mono">0{step}</span>{label}</button>;
+            })}
+          </nav>
           <form className="ec-panel planner-form" onSubmit={create}>
             <div className="panel-heading">
               <div>
@@ -206,6 +213,7 @@ export function MigrationPlanner({
               <Route size={18} />
             </div>
             <div className="form-body">
+              {wizardStep === 1 && <>
               <div className="planner-url-scan">
                 <label>
                   Start with a website
@@ -311,6 +319,9 @@ export function MigrationPlanner({
                   </div>
                 </details>
               )}
+              <div className="form-actions"><small>Continue after choosing evidence to review the deployment context.</small><button type="button" className="ec-button" onClick={() => setWizardStep(2)}>Next: environment <ArrowRight size={16} /></button></div>
+              </>}
+              {wizardStep === 2 && <>
               <div className="form-divider">
                 <h3>2. Review the discovered environment</h3>
                 <p>
@@ -401,6 +412,9 @@ export function MigrationPlanner({
                   </label>
                 </div>
               </details>
+              <div className="form-actions"><button type="button" className="ec-button secondary" onClick={() => setWizardStep(1)}>Back</button><button type="button" className="ec-button" onClick={() => setWizardStep(3)}>Next: traffic <ArrowRight size={16} /></button></div>
+              </>}
+              {wizardStep === 3 && <>
               <div className="form-divider">
                 <h3>3. Add your traffic baseline</h3>
                 <p>
@@ -464,6 +478,7 @@ export function MigrationPlanner({
                   Creates a saved draft. Review assumptions before scheduling
                   work.
                 </small>
+                <button type="button" className="ec-button secondary" onClick={() => setWizardStep(2)}>Back</button>
                 <button className="ec-button" disabled={busy || !network}>
                   {busy ? (
                     <LoaderCircle size={16} className="animate-spin" />
@@ -473,6 +488,7 @@ export function MigrationPlanner({
                   Build plan
                 </button>
               </div>
+              </>}
             </div>
           </form>
           <section className="ec-panel saved-plans">

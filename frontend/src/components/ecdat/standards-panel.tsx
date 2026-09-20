@@ -7,13 +7,20 @@ import {
   ExternalLink,
   Calendar,
   AlertCircle,
-  FileCheck,
+  HelpCircle,
 } from "lucide-react";
 import { requestApi, StandardMapping } from "@/lib/api";
 
 interface StandardsPanelProps {
   project: string;
   token: string;
+}
+
+function complianceStatus(status: string) {
+  const value = status.toLowerCase();
+  if (value.includes("met") || value.includes("compliant") || value.includes("ready")) return { label: "Met", className: "border-emerald-500/25 bg-emerald-500/10 text-emerald-400", Icon: ShieldCheck };
+  if (value.includes("risk") || value.includes("gap") || value.includes("required") || value.includes("pending")) return { label: "At risk", className: "border-amber-500/25 bg-amber-500/10 text-amber-400", Icon: AlertCircle };
+  return { label: "Unknown", className: "border-slate-500/25 bg-slate-500/10 text-quiet", Icon: HelpCircle };
 }
 
 export function StandardsPanel({ project, token }: StandardsPanelProps) {
@@ -24,20 +31,21 @@ export function StandardsPanel({ project, token }: StandardsPanelProps) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    loadStandards();
-  }, [project, token]);
-
-  async function loadStandards() {
-    setLoading(true);
-    try {
-      const res = await requestApi<any>("/standards/mapping", project, token);
-      setCatalog(res);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
+    let active = true;
+    async function loadStandards() {
+      setLoading(true);
+      try {
+        const res = await requestApi<{ frameworks: Array<{ name: string; status: string }>; mappings: StandardMapping[] }>("/standards/mapping", project, token);
+        if (active) setCatalog(res);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (active) setLoading(false);
+      }
     }
-  }
+    void loadStandards();
+    return () => { active = false; };
+  }, [project, token]);
 
   return (
     <div className="space-y-6">
@@ -55,17 +63,18 @@ export function StandardsPanel({ project, token }: StandardsPanelProps) {
         </div>
       </div>
 
+      {loading && !catalog && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Loading compliance matrix">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-20 animate-pulse rounded-lg bg-surface-raised" />)}</div>}
       {/* Framework Badges */}
       {catalog && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {catalog.frameworks.map((fw, idx) => (
-            <div key={idx} className="p-3.5 rounded-lg border border-subtle bg-surface">
-              <div className="text-xs font-semibold text-cyan-400 uppercase tracking-wider mb-1">
-                {fw.status}
-              </div>
-              <div className="text-sm font-bold text-foreground">{fw.name}</div>
-            </div>
-          ))}
+          {catalog.frameworks.map((fw, idx) => {
+            const status = complianceStatus(fw.status);
+            const Icon = status.Icon;
+            return <div key={idx} className="p-3.5 rounded-lg border border-subtle bg-surface">
+              <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${status.className}`}><Icon size={11} />{status.label}</span>
+              <div className="mt-2 text-sm font-bold text-foreground">{fw.name}</div>
+            </div>;
+          })}
         </div>
       )}
 
@@ -97,8 +106,10 @@ export function StandardsPanel({ project, token }: StandardsPanelProps) {
                   Applicable Regulatory Mandates
                 </span>
                 <div className="grid grid-cols-1 gap-2">
-                  {mapping.controls.map((ctrl, cIdx) => (
-                    <div
+                  {mapping.controls.map((ctrl, cIdx) => {
+                    const status = complianceStatus(ctrl.status);
+                    const Icon = status.Icon;
+                    return <div
                       key={cIdx}
                       className="p-3 rounded bg-canvas border border-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
                     >
@@ -106,9 +117,7 @@ export function StandardsPanel({ project, token }: StandardsPanelProps) {
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-foreground">{ctrl.standard}</span>
                           <span className="text-quiet">({ctrl.jurisdiction})</span>
-                          <span className="text-xs px-2 py-0.5 rounded bg-surface border border-subtle text-quiet">
-                            {ctrl.status}
-                          </span>
+                          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${status.className}`}><Icon size={11} />{status.label}</span>
                         </div>
                         <p className="text-quiet">{ctrl.requirement}</p>
                         {ctrl.deadline_or_milestone && (
@@ -126,8 +135,8 @@ export function StandardsPanel({ project, token }: StandardsPanelProps) {
                       >
                         Official Spec <ExternalLink size={12} />
                       </a>
-                    </div>
-                  ))}
+                    </div>;
+                  })}
                 </div>
               </div>
             </div>

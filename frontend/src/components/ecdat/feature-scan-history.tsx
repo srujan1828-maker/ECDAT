@@ -20,6 +20,9 @@ import {
   Copy,
   Check,
   Radio,
+  BadgeCheck,
+  Fingerprint,
+  Network,
 } from "lucide-react";
 import { Scan, Finding } from "@/lib/api";
 
@@ -100,6 +103,17 @@ function StatusBadge({ status }: { status: Scan["status"] }) {
       {status}
     </span>
   );
+}
+
+function findingPresentation(scan: Scan) {
+  const first = (scan.result?.findings || scan.result?.detections || [])[0];
+  const text = `${first?.primitive || ""} ${first?.issue || ""} ${first?.description || ""}`.toLowerCase();
+  const severity = String(first?.severity || "").toLowerCase();
+  const border = severity.includes("critical") ? "border-l-risk-critical" : severity.includes("high") ? "border-l-risk-high" : severity.includes("medium") ? "border-l-risk-medium" : severity.includes("low") ? "border-l-risk-low" : "border-l-cyan-500";
+  if (text.includes("cert")) return { Icon: BadgeCheck, label: "Certificate", border };
+  if (text.includes("tls") || text.includes("protocol")) return { Icon: Network, label: "Protocol", border };
+  if (text.includes("key")) return { Icon: Key, label: "Key material", border };
+  return { Icon: Fingerprint, label: "Algorithm", border };
 }
 
 function getScanTargetLabel(scan: Scan): string {
@@ -256,18 +270,19 @@ export function FeatureScanHistory({
                   []
                 ).length;
                 const isExported = exportIds.includes(scan.id);
+                const presentation = findingPresentation(scan);
+                const FindingIcon = presentation.Icon;
 
                 return (
                   <div
                     key={scan.id}
                     onClick={() => onSelectScan(scan.id)}
-                    className={`border-l-2 p-3.5 cursor-pointer transition-colors ${
-                      isSelected
-                        ? "border-l-cyan-500 bg-cyan-500/5"
-                        : "border-l-transparent hover:bg-surface-raised/40"
-                    }`}
+                    className={`border-l-4 p-3.5 cursor-pointer transition-colors ${
+                      isSelected ? "bg-cyan-500/5" : "hover:bg-surface-raised/40"
+                    } ${presentation.border}`}
                   >
                     <div className="flex items-start gap-3">
+                      <span className="mt-0.5 rounded-md bg-surface-raised p-1.5 text-teal" title={presentation.label}><FindingIcon size={14} /></span>
                       <input
                         type="checkbox"
                         checked={isExported}
@@ -290,6 +305,7 @@ export function FeatureScanHistory({
 
                         {/* Feature-specific summary line */}
                         <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-quiet">
+                          <span className="inline-flex items-center gap-1 rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-foreground"><FindingIcon size={11} />{presentation.label}</span>
                           <span className="flex items-center gap-1">
                             <Clock size={11} />
                             {new Date(scan.created_at).toLocaleTimeString([], {

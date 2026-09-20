@@ -1,6 +1,8 @@
 "use client";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import {
+  Bar,
+  BarChart,
   Line,
   LineChart,
   CartesianGrid,
@@ -32,6 +34,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { Scan } from "@/lib/api";
+import { CorrelationGraph } from "@/components/ecdat/correlation-graph";
 export function Overview({
   scans,
   connected,
@@ -106,10 +109,10 @@ export function Overview({
   const quantumReadiness = complete.length ? Math.max(18, 100 - riskScore) : 0;
   const migrationReadiness = complete.length ? Math.max(12, 86 - riskScore) : 0;
   const severityChartData = [
-    { name: "Critical", value: severityCounts.critical, color: "#ef4444" },
-    { name: "High", value: severityCounts.high, color: "#f97316" },
-    { name: "Medium", value: severityCounts.medium, color: "#eab308" },
-    { name: "Low", value: severityCounts.low, color: "#22c55e" },
+    { name: "Critical", value: severityCounts.critical, color: "var(--ecdat-critical)" },
+    { name: "High", value: severityCounts.high, color: "var(--ecdat-high)" },
+    { name: "Medium", value: severityCounts.medium, color: "var(--ecdat-medium)" },
+    { name: "Low", value: severityCounts.low, color: "var(--ecdat-low)" },
   ].filter((item) => item.value > 0);
   const data = useMemo(
     () =>
@@ -330,6 +333,18 @@ export function Overview({
       </div>
       <div className="overview-charts">
         <section className="ec-panel">
+          <div className="panel-heading"><div><h2>Surface comparison</h2><p>Completed discoveries by evidence surface</p></div></div>
+          <div className="h-[210px]">
+            <ResponsiveContainer width="100%" height="100%"><BarChart data={[
+              { surface: "Source", scans: complete.filter((s) => s.kind === "code").length },
+              { surface: "Binary", scans: complete.filter((s) => s.kind === "binary").length },
+              { surface: "TLS", scans: complete.filter((s) => s.kind === "network").length },
+            ]} margin={{ top: 15, right: 12, left: -20, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 5" /><XAxis dataKey="surface" tick={{ fill: "var(--muted-text)", fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={{ fill: "var(--muted-text)", fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8 }} /><Bar dataKey="scans" name="Completed scans" fill="var(--teal)" radius={[5, 5, 0, 0]} />
+            </BarChart></ResponsiveContainer>
+          </div>
+        </section>
+        <section className="ec-panel">
           <div className="panel-heading">
             <div>
               <h2>Scan activity</h2>
@@ -488,6 +503,7 @@ export function Overview({
           )}
         </section>
       </div>
+      <CorrelationGraph scans={scans} />
       <section className="ec-panel">
         <div className="panel-heading">
           <div>

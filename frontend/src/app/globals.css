@@ -2144,3 +2144,19 @@ button:disabled {
 .workspace-shell nav [aria-current="page"]::after { content: ""; position: absolute; inset: 7px auto 7px -1px; width: 3px; border-radius: 99px; background: var(--teal); animation: active-nav-enter 260ms ease-out both; }
 @keyframes active-nav-enter { from { opacity: 0; transform: scaleY(0.3); } to { opacity: 1; transform: scaleY(1); } }
 @media (max-width: 1023px) { .nav-group-label, .nav-group-action { display: none; } }
+
+
+/* Shared job-state affordance: indeterminate by design because scan APIs do not expose a percent complete. */
+.scan-progress-ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  color: var(--teal);
+  background: conic-gradient(var(--teal) 0deg 240deg, color-mix(in srgb, var(--teal) 20%, transparent) 240deg 360deg);
+  animation: scan-progress-spin 1.4s linear infinite;
+}
+.scan-progress-ring svg { animation-direction: reverse; }
+@keyframes scan-progress-spin { to { transform: rotate(360deg); } }
