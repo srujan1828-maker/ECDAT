@@ -469,7 +469,6 @@ export type AIRefactorRequest = {
   source_code: string;
   language: string;
   findings?: Finding[];
-  nvidia_api_key?: string;
   model?: string;
 };
 
@@ -493,7 +492,6 @@ export type AIExplainRequest = {
   primitive: string;
   issue?: string;
   code_context?: string;
-  nvidia_api_key?: string;
 };
 
 export type AIExplainResponse = {
