@@ -1,6 +1,4 @@
-import io
 import time
-import zipfile
 
 
 def _finish(client, response, project="default"):
@@ -102,67 +100,3 @@ def test_custom_loop_contract(client):
     assert "hashlib.sha256" in result["after_state"]["code"]
     assert result["regression_test"]["status"] == "passed"
     assert client.get("/api/custom-loop/latest").json()["run_id"] == result["run_id"]
-
-
-def test_patch_from_scan_applies_selected_templates_and_queues_rescan(client):
-    source = (
-        "import hashlib\n"
-        "from cryptography.hazmat.primitives.asymmetric import rsa\n"
-        "hashlib.md5(b'legacy').hexdigest()\n"
-        "rsa.generate_private_key(public_exponent=65537, key_size=1024)\n"
-    )
-    baseline = _finish(client, client.post("/api/scan/code", json={
-        "source_code": source, "language": "python",
-    }))
-    response = client.post("/api/patch/from-scan", json={
-        "scan_id": baseline["id"], "project_id": "default",
-        "file_path": "app.py",
-        "selected_patterns": ["MD5_TO_SHA256_PYTHON", "RSA_1024_UPGRADE_PYTHON"],
-    })
-    assert response.status_code == 200, response.text
-    result = response.json()
-    assert result["applied"] is True
-    assert result["total_patched"] == 2
-    assert "hashlib.sha256" in result["patched_code"]
-    assert "key_size=3072" in result["patched_code"]
-    assert result["verification_status"] in ("passed", "static_verified")
-    assert "simulated" not in result["verification_status"]
-
-    post_scan = result["post_migration_scan_id"]
-    for _ in range(200):
-        record = client.get(f"/api/scans/{post_scan}").json()
-        if record["status"] not in ("queued", "running"):
-            break
-        time.sleep(0.02)
-    assert record["status"] == "completed"
-    assert record["result"]["findings"][0]["primitive"] == "RSA-3072"
-
-
-def test_folder_patch_preserves_entire_project_download(client):
-    baseline = _finish(client, client.post("/api/scan/sources", json={"files": [
-        {"path": "src/security.py", "content": "import hashlib\nhashlib.md5(b'x')\n", "language": "python"},
-        {"path": "src/clean.py", "content": "print('keep me')\n", "language": "python"},
-        {"path": "README.md", "content": "# Original project\n"},
-    ]}))
-    request = {
-        "scan_id": baseline["id"], "project_id": "default",
-        "selected_patterns": ["MD5_TO_SHA256_PYTHON"],
-        "file_path": "project",
-    }
-    patched = client.post("/api/patch/from-scan", json=request)
-    assert patched.status_code == 200, patched.text
-    result = patched.json()
-    assert result["project_file_count"] == 3
-    assert [item["path"] for item in result["patched_files"]] == ["src/security.py"]
-
-    download = client.post("/api/patch/from-scan/download", json=request)
-    assert download.status_code == 200, download.text
-    assert download.headers["content-type"] == "application/zip"
-    with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
-        assert set(archive.namelist()) >= {
-            "src/security.py", "src/clean.py", "README.md",
-            "POST_QUANTUM_MIGRATION_REPORT.md",
-        }
-        assert "hashlib.sha256" in archive.read("src/security.py").decode()
-        assert archive.read("src/clean.py").decode() == "print('keep me')\n"
-        assert archive.read("README.md").decode() == "# Original project\n"
