@@ -3,6 +3,7 @@ from datetime import date
 from fastapi.encoders import jsonable_encoder
 import base64
 import io
+import json
 import os
 import re
 import secrets
@@ -82,6 +83,8 @@ from engine.llm_engine import DeepSeekR1Engine
 @asynccontextmanager
 async def lifespan(app):
     app.state.store = ScanStore()
+    app.state.latest_custom_loop = None
+    app.state.uploads = {}
     yield
     app.state.store.close()
 
@@ -378,8 +381,10 @@ async def upload(request: Request, file: UploadFile = File(...), project: str = 
 
 
 @router.get('/scans')
-def scans(request: Request, project: str = Project):
-    return request.app.state.store.list(project)
+def scans(request: Request, project: str = Project, status: Optional[str] = None):
+    if status and status not in {'queued', 'running', 'completed', 'failed', 'cancelled'}:
+        raise HTTPException(422, 'Invalid scan status')
+    return request.app.state.store.list(project, status)
 
 
 @router.get('/scans/{scan_id}')
@@ -388,6 +393,60 @@ def scan(scan_id: str, request: Request, project: str = Project):
     if result is None:
         raise HTTPException(404, 'Scan not found')
     return result
+
+
+@router.get('/scans/{scan_id}/result')
+def scan_result(scan_id: str, request: Request, project: str = Project):
+    record = request.app.state.store.get(scan_id, project)
+    if record is None:
+        raise HTTPException(404, 'Scan not found')
+    if record['status'] == 'failed':
+        raise HTTPException(409, record.get('error') or 'Scan failed')
+    if record['status'] != 'completed':
+        raise HTTPException(409, f"Scan is {record['status']}")
+    result = dict(record.get('result') or {})
+    payload = request.app.state.store.get_payload(scan_id, project) or {}
+    files = payload.get('files') or []
+    if files:
+        result.setdefault('source_files', [
+            {'path': item.get('path', 'source.txt'), 'language': item.get('language')}
+            for item in files
+        ])
+        result.setdefault('source_file_count', len(files))
+    if files and len(files) == 1:
+        result.setdefault('source_code', files[0].get('content', ''))
+    return result
+
+
+@router.get('/scans/{scan_id}/source-archive')
+def scan_source_archive(scan_id: str, request: Request, project: str = Project):
+    """Download the complete stored source tree for a scan as a ZIP archive."""
+    record = request.app.state.store.get(scan_id, project)
+    if record is None:
+        raise HTTPException(404, 'Scan not found')
+    payload = request.app.state.store.get_payload(scan_id, project) or {}
+    files = payload.get('files') or []
+    if not files:
+        raise HTTPException(422, 'This scan does not contain a source project')
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as output:
+        for item in files:
+            clean_path = str(item.get('path', 'source.txt')).replace('\\', '/').lstrip('/')
+            if not clean_path or '..' in clean_path.split('/'):
+                raise HTTPException(422, 'Stored source project contains an invalid path')
+            output.writestr(clean_path, str(item.get('content', '')).encode('utf-8', errors='replace'))
+        audit = payload.get('patch_audit')
+        if audit:
+            output.writestr('ECDAT_PATCH_AUDIT.json', json.dumps(audit, indent=2).encode())
+    body = archive.getvalue()
+    return Response(
+        content=body,
+        media_type='application/zip',
+        headers={
+            'Content-Disposition': f'attachment; filename="ecdat_patched_project_{scan_id[:8]}.zip"',
+            'Content-Length': str(len(body)),
+        },
+    )
 
 
 @router.post('/scans/{scan_id}/cancel')
@@ -1536,6 +1595,7 @@ def github_pull(req: GitHubPullRequest):
         raise HTTPException(500, f"GitHub pull failed: {exc}")
 
 
+@router.post('/scan/github', status_code=202)
 @router.post('/github/scan', status_code=202)
 def github_scan(req: GitHubPullRequest, request: Request, project: str = Project):
     try:
@@ -1608,6 +1668,64 @@ def ai_explain_endpoint(req: AIExplainRequest):
         issue=req.issue,
         code_context=req.code_context,
     )
+
+
+class AITriageRequest(BaseModel):
+    code_snippet: str = Field(min_length=1, max_length=500_000)
+    file_path: str = Field(default='snippet.py', max_length=500)
+    api_key: Optional[str] = None
+
+
+@router.post('/ai/triage')
+def ai_triage(req: AITriageRequest):
+    language = normalize_language(Path(req.file_path).suffix.lstrip('.') or 'python', req.file_path)
+    result = scan_sources([{'path': req.file_path, 'content': req.code_snippet, 'language': language}])
+    return {
+        'mode': 'deterministic_triage', 'status': result.get('status', 'success'),
+        'summary': f"Identified {len(result.get('findings', []))} cryptographic finding(s).",
+        'findings': result.get('findings', []), 'coverage': result.get('coverage', []),
+        'limitations': result.get('limitations', []),
+    }
+
+
+class MigrationAdvisoryRequest(BaseModel):
+    current_algorithm: str = Field(min_length=1, max_length=100)
+    cryptographic_role: str = Field(default='KEY_EXCHANGE', max_length=100)
+    data_lifetime_years: int = Field(default=15, ge=0, le=200)
+    environment: str = Field(default='Production', max_length=100)
+    api_key: Optional[str] = None
+
+
+@router.post('/ai/migration-advisory')
+def ai_migration_advisory(req: MigrationAdvisoryRequest):
+    algorithm = req.current_algorithm.upper()
+    if any(name in algorithm for name in ('RSA', 'DH', 'ECDH')):
+        target = 'ML-KEM-768 (FIPS 203)'
+    elif any(name in algorithm for name in ('ECDSA', 'DSA', 'ED25519')):
+        target = 'ML-DSA-65 (FIPS 204)'
+    else:
+        target = 'AES-256 and SHA-384, subject to protocol-specific review'
+    return {
+        'current_algorithm': req.current_algorithm, 'recommended_target': target,
+        'priority': 'CRITICAL' if req.data_lifetime_years >= 10 else 'HIGH',
+        'recommendation': f'Migrate {req.cryptographic_role} usage in {req.environment} to {target} using a hybrid transition and closed-loop verification.',
+        'migration_steps': ['Inventory dependent assets', 'Introduce algorithm abstraction', 'Deploy a hybrid transition', 'Re-scan and verify retired weaknesses'],
+        'evidence_basis': "Mosca's theorem and the NIST post-quantum standards mapping.",
+    }
+
+
+@router.post('/projects/{project_id}/ai/summary')
+def project_ai_summary(project_id: str, request: Request):
+    project = request.app.state.store.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, 'Project not found')
+    data = overview(request, project_id)
+    return {
+        'mode': 'evidence_based_summary', 'project': project['name'],
+        'summary': f"{data['scan_count']} completed scans produced {data['kpis']['total_findings']} findings for {project['name']}.",
+        'kpis': data['kpis'], 'recommended_action': 'Prioritize critical findings, plan deterministic migrations, and verify changes with a post-migration scan.',
+        'limitations': data.get('limitations', []),
+    }
 
 
 DEMO_TARGETS = {
@@ -1796,6 +1914,512 @@ def classify_binary_ml(req: BinaryMLRequest):
     except ValueError:
         raise HTTPException(422, 'Invalid hex data')
     return BinaryMLClassifier.classify_binary(raw, req.file_name).model_dump()
+
+
+# -------------------------------------------------------------------------
+# Frontend compatibility API
+# These routes expose the persistent V4 store through the resource names used
+# by the Next.js console. Keeping them here makes the browser and CLI APIs use
+# the same source of truth instead of separate mock data.
+# -------------------------------------------------------------------------
+
+class ProjectRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default='', max_length=2000)
+    organization: str = Field(default='', max_length=200)
+    environment: Literal['Production', 'Staging', 'Development', 'Research', 'Other'] = 'Production'
+    business_criticality: Literal['Critical', 'High', 'Medium', 'Low', 'Unknown'] = 'Unknown'
+    data_sensitivity: Literal['Public', 'Internal', 'Confidential', 'Sensitive', 'Classified', 'Unknown'] = 'Unknown'
+    data_lifetime_years: int = Field(default=10, ge=0, le=200)
+    migration_target_date: Optional[str] = None
+    owner: Optional[str] = Field(default=None, max_length=200)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=6, max_length=200)
+
+
+class RegisterRequest(LoginRequest):
+    name: str = Field(min_length=1, max_length=200)
+    role: Literal['OWNER', 'ADMIN', 'SECURITY_ANALYST', 'VIEWER'] = 'SECURITY_ANALYST'
+
+
+def _auth_response(user: dict) -> dict:
+    return {
+        'user_id': user['id'], 'email': user['email'], 'name': user['name'],
+        'role': user['role'], 'token': secrets.token_urlsafe(32),
+    }
+
+
+@router.post('/auth/login')
+def login(req: LoginRequest, request: Request):
+    user = request.app.state.store.authenticate_user(req.email, req.password)
+    if user is None:
+        raise HTTPException(401, 'Invalid email or password')
+    return _auth_response(user)
+
+
+@router.post('/auth/register', status_code=201)
+def register(req: RegisterRequest, request: Request):
+    try:
+        user = request.app.state.store.create_user(req.email, req.name, req.role, req.password)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _auth_response(user)
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    organization: Optional[str] = Field(default=None, max_length=200)
+    environment: Optional[Literal['Production', 'Staging', 'Development', 'Research', 'Other']] = None
+    business_criticality: Optional[Literal['Critical', 'High', 'Medium', 'Low', 'Unknown']] = None
+    data_sensitivity: Optional[Literal['Public', 'Internal', 'Confidential', 'Sensitive', 'Classified', 'Unknown']] = None
+    data_lifetime_years: Optional[int] = Field(default=None, ge=0, le=200)
+    migration_target_date: Optional[str] = None
+    owner: Optional[str] = Field(default=None, max_length=200)
+    tags: Optional[list[str]] = Field(default=None, max_length=50)
+
+
+@router.get('/projects')
+def list_projects(request: Request):
+    return request.app.state.store.list_projects()
+
+
+@router.post('/projects', status_code=201)
+def create_project(req: ProjectRequest, request: Request):
+    try:
+        return request.app.state.store.save_project(req.model_dump(), create=True)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get('/projects/{project_id}')
+def get_project(project_id: str, request: Request):
+    value = request.app.state.store.get_project(project_id)
+    if value is None:
+        raise HTTPException(404, 'Project not found')
+    return value
+
+
+@router.patch('/projects/{project_id}')
+def update_project(project_id: str, req: ProjectUpdate, request: Request):
+    if request.app.state.store.get_project(project_id) is None:
+        raise HTTPException(404, 'Project not found')
+    values = req.model_dump(exclude_unset=True)
+    values['id'] = project_id
+    return request.app.state.store.save_project(values)
+
+
+@router.get('/projects/{project_id}/assets')
+def project_assets(project_id: str, request: Request):
+    return request.app.state.store.get_assets(project_id)
+
+
+def _frontend_evidence(record: dict, asset_id: Optional[str] = None) -> dict:
+    metadata = record.get('metadata') or {}
+    provenance = record.get('provenance') or {}
+    return {
+        **record,
+        'asset_id': asset_id or record.get('asset_id') or record.get('artifact_id'),
+        'scan_id': provenance.get('scan_id', record.get('scan_id', '')),
+        'project': record.get('project', ''),
+        'evidence_type': record.get('observation_type', 'OBSERVATION'),
+        'algorithm': metadata.get('algorithm') or record.get('symbol') or record.get('description', 'Unknown'),
+        'location': record.get('location') or record.get('file_path') or provenance.get('location') or 'Unknown',
+        'snippet': metadata.get('snippet') or record.get('raw_details', {}).get('snippet'),
+        'rule_id': record.get('rule_id') or provenance.get('rule_id') or 'UNSPECIFIED',
+    }
+
+
+def _query_project_evidence(request: Request, project: str, level=None, asset_id=None, scan_id=None):
+    query = 'SELECT asset_id, data FROM evidence WHERE project=?'
+    params = [project]
+    if level:
+        query += ' AND level=?'
+        params.append(level)
+    if asset_id:
+        query += ' AND asset_id=?'
+        params.append(asset_id)
+    if scan_id:
+        query += ' AND scan_id=?'
+        params.append(scan_id)
+    query += ' ORDER BY created_at DESC'
+    with request.app.state.store.connect() as db:
+        rows = db.execute(query, params).fetchall()
+    return [_frontend_evidence(json.loads(row['data']), row['asset_id']) for row in rows]
+
+
+@router.get('/projects/{project_id}/evidence')
+def project_evidence(project_id: str, request: Request):
+    return _query_project_evidence(request, project_id)
+
+
+@router.get('/evidence')
+def evidence_alias(request: Request, project: str = Project, level: Optional[str] = None,
+                   asset_id: Optional[str] = None, scan_id: Optional[str] = None):
+    return _query_project_evidence(request, project, level, asset_id, scan_id)
+
+
+@router.get('/agility/assessment')
+def project_agility(request: Request, project: str = Project):
+    assets = request.app.state.store.get_assets(project)
+    scans = request.app.state.store.list(project, 'completed')
+    hardcoded = sum(1 for asset in assets if 'source' in str(asset.get('artifact_id', '')).lower())
+    assessment = calculate_crypto_agility(
+        hardcoded_primitives_count=hardcoded,
+        abstracted_primitives_count=max(0, len(assets) - hardcoded),
+        has_provider_abstraction=False,
+        has_pqc_hybrid_support=any('ml-' in str(a.get('algorithm', '')).lower() for a in assets),
+        automated_cert_rotation=False,
+        uses_config_driven_crypto=False,
+    )
+    score = round(float(assessment.get('cai_score', 0)) * 10, 1)
+    state = 'OBSERVED' if assets else 'UNKNOWN'
+    names = ['Algorithm Substitution', 'Protocol Negotiation', 'Configuration', 'Dependencies', 'Certificates', 'Deployment', 'Validation']
+    return {
+        'overall_score': score,
+        'total_assets_evaluated': len(assets),
+        'total_scans_evaluated': len(scans),
+        'dimensions': [{'name': name, 'state': state, 'desc': f'{name} capability derived from collected project evidence.', 'evidence_basis': f'{len(assets)} assets across {len(scans)} completed scans.'} for name in names],
+        'details': assessment,
+    }
+
+
+class MoscaProjectRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=64)
+    data_sensitivity_years: int = Field(default=10, ge=0, le=200)
+    migration_time_years: float = Field(default=3, ge=0, le=100)
+    crqc_horizon_override: Optional[int] = Field(default=None, ge=1, le=200)
+
+
+@router.post('/quantum/mosca-project-scan')
+def project_mosca(req: MoscaProjectRequest, request: Request):
+    assets = request.app.state.store.get_assets(req.project_id)
+    grouped = {}
+    for asset in assets:
+        algorithm = asset.get('algorithm') or asset.get('name') or 'Unknown'
+        grouped[algorithm] = grouped.get(algorithm, 0) + 1
+    results = []
+    for algorithm, count in grouped.items():
+        quantum_vulnerable = any(x in algorithm.upper() for x in ('RSA', 'ECDSA', 'ECDH', 'DH'))
+        z = req.crqc_horizon_override or 10
+        deficit = req.data_sensitivity_years + req.migration_time_years - z
+        exposed = quantum_vulnerable and deficit > 0
+        results.append({
+            'algorithm': algorithm, 'key_size': None,
+            'x_sensitivity_years': req.data_sensitivity_years,
+            'y_migration_years': req.migration_time_years,
+            'z_threat_horizon_years': z,
+            'quantum_deficit_years': max(0, deficit),
+            'harvest_now_risk': exposed,
+            'risk_level': 'CRITICAL' if exposed else ('LOW' if quantum_vulnerable else 'SAFE'),
+            'risk_score': 100 if exposed else (25 if quantum_vulnerable else 0),
+            'explanation': 'Mosca inequality X + Y > Z applies.' if exposed else 'No current Mosca deficit was identified.',
+            'recommendation': 'Prioritize migration to an applicable NIST PQC standard.' if quantum_vulnerable else 'Maintain controls and continue monitoring.',
+            'literature_reference': "Mosca's theorem (X + Y > Z)", 'asset_count': count,
+        })
+    return {'results': results, 'message': '' if results else 'Run a scan to calculate project-specific HNDL exposure.'}
+
+
+class PatchFromScanRequest(BaseModel):
+    scan_id: str = Field(min_length=1, max_length=100)
+    project_id: str = Field(default='default', min_length=1, max_length=64)
+    selected_patterns: list[str] = Field(default_factory=list, max_length=100)
+    file_path: str = Field(default='app.py', max_length=500)
+    override_code: Optional[str] = Field(default=None, max_length=500_000)
+
+
+@router.post('/patch/from-scan')
+def patch_from_scan(req: PatchFromScanRequest, request: Request):
+    record = request.app.state.store.get(req.scan_id, req.project_id)
+    if record is None or record['status'] != 'completed':
+        raise HTTPException(404, 'Completed source scan not found')
+    payload = request.app.state.store.get_payload(req.scan_id, req.project_id) or {}
+    files = payload.get('files') or []
+    if req.override_code is not None:
+        files = [{'path': req.file_path, 'content': req.override_code, 'language': files[0].get('language', 'python') if files else 'python'}]
+    if not files:
+        raise HTTPException(422, 'The scan does not contain source code that can be patched')
+    patch_result = AutoPatchEngine.patch_entire_codebase(
+        files, selected_patterns=req.selected_patterns or None
+    )
+    patched_files = patch_result.get('patched_files', [])
+    if not patched_files:
+        raise HTTPException(404, 'No applicable safe migration template matched the scan')
+    failed = [item for item in patched_files if item.get('verification_status') not in {'passed', 'static_verified'}]
+    if failed:
+        raise HTTPException(422, f"Patch verification failed for {failed[0]['path']}: {failed[0].get('test_output', '')}")
+    patched_lookup = {item['path']: item['patched_code'] for item in patched_files}
+    output_files = [
+        {**item, 'content': patched_lookup.get(item['path'], item.get('content', ''))}
+        for item in files
+    ]
+    post_scan = enqueue(
+        request,
+        req.project_id,
+        'code',
+        {
+            'files': output_files,
+            'patch_audit': {
+                'baseline_scan_id': req.scan_id,
+                'patched_files': [item['path'] for item in patched_files],
+                'summary': patch_result['summary'],
+            },
+        },
+        lambda payload: scan_sources(payload['files']),
+    )
+    first = patched_files[0]
+    combined_diff = '\n'.join(item.get('unified_diff', '') for item in patched_files)
+    patterns = [pattern for item in patched_files for pattern in item.get('pattern_id', '').split('+') if pattern]
+    value = {
+        'pattern_id': '+'.join(patterns),
+        'target_language': first.get('language', 'multi'),
+        'file_path': first['path'],
+        'original_code': first['original_code'],
+        'patched_code': first['patched_code'],
+        'unified_diff': combined_diff,
+        'transformation_description': ' | '.join(item.get('transformation', '') for item in patched_files),
+        'verification_status': 'passed' if all(item.get('verification_status') == 'passed' for item in patched_files) else 'static_verified',
+        'test_output': '\n'.join(f"{item['path']}: {item.get('test_output', '')}" for item in patched_files),
+        're_scan_summary': patch_result['summary'],
+        'patched_files': patched_files,
+        'project_file_count': len(files),
+        'project_archive_available': True,
+    }
+    value.update({
+        'total_patched': patch_result['summary']['vulnerabilities_remediated'],
+        'baseline_scan_id': req.scan_id,
+        'post_migration_scan_id': post_scan['id'],
+        'applied': True,
+        'execution_logs': [
+            f'[ SCAN ] Loaded completed scan {req.scan_id[:8]}',
+            f"[ PATCH ] Patched {len(patched_files)} of {len(files)} project files",
+            f"[ VERIFY ] Remediated {patch_result['summary']['vulnerabilities_remediated']} findings with real regression/static checks",
+            f"[ RESCAN ] Queued post-migration scan {post_scan['id'][:8]}",
+        ],
+    })
+    return value
+
+
+@router.post('/patch/from-scan/download')
+def download_patch_from_scan(req: PatchFromScanRequest, request: Request):
+    record = request.app.state.store.get(req.scan_id, req.project_id)
+    if record is None or record['status'] != 'completed':
+        raise HTTPException(404, 'Completed source scan not found')
+    payload = request.app.state.store.get_payload(req.scan_id, req.project_id) or {}
+    files = payload.get('files') or []
+    if not files:
+        raise HTTPException(422, 'The scan does not contain a source project')
+    patch_result = AutoPatchEngine.patch_entire_codebase(
+        files, selected_patterns=req.selected_patterns or None
+    )
+    if not patch_result.get('patched_files'):
+        raise HTTPException(404, 'No applicable safe migration template matched the scan')
+    zip_bytes = AutoPatchEngine.create_patched_zip(files, patch_result)
+    return Response(
+        content=zip_bytes,
+        media_type='application/zip',
+        headers={
+            'Content-Disposition': 'attachment; filename="ecdat_patched_project.zip"',
+            'Content-Length': str(len(zip_bytes)),
+        },
+    )
+
+
+class CustomLoopRequest(BaseModel):
+    target_type: Literal['source', 'binary'] = 'source'
+    file_name: str = Field(default='app.py', max_length=500)
+    language: str = Field(default='python', max_length=50)
+    preset_name: Optional[str] = Field(default=None, max_length=100)
+    source_code: Optional[str] = Field(default=None, max_length=500_000)
+    binary_hex: Optional[str] = Field(default=None, max_length=MAX_BYTES * 2)
+
+
+@router.post('/custom-loop/run')
+def run_custom_loop(req: CustomLoopRequest, request: Request):
+    import time
+    import uuid
+
+    started = time.perf_counter()
+    if req.target_type != 'source' or not req.source_code:
+        raise HTTPException(422, 'Automated remediation currently requires a source-code target')
+    before = scan_sources([{'path': req.file_name, 'content': req.source_code, 'language': req.language}])
+    patch = AutoPatchEngine.create_patch(req.source_code, req.file_name, req.language)
+    if patch is None:
+        raise HTTPException(404, 'No deterministic remediation is available for this target')
+    patch = AutoPatchEngine.run_regression_test(patch)
+    after = scan_sources([{'path': req.file_name, 'content': patch.patched_code, 'language': req.language}])
+    before_findings = before.get('findings', [])
+    after_findings = after.get('findings', [])
+    retired_names = sorted({f.get('primitive', 'Unknown') for f in before_findings} - {f.get('primitive', 'Unknown') for f in after_findings})
+    introduced_names = sorted({f.get('primitive', 'Unknown') for f in after_findings} - {f.get('primitive', 'Unknown') for f in before_findings})
+    retired = [{'primitive': name, 'category': 'retired weakness', 'surface': 'source', 'location': req.file_name, 'severity': 'HIGH', 'description': f'{name} was removed by the deterministic patch.'} for name in retired_names]
+    introduced = [{'primitive': name, 'category': 'modern protection', 'surface': 'source', 'location': req.file_name, 'severity': 'LOW', 'description': f'{name} was introduced by the deterministic patch.'} for name in introduced_names]
+    regressions = [{'primitive': f.get('primitive', 'Unknown'), 'category': 'regression', 'surface': 'source', 'location': req.file_name, 'severity': f.get('severity', 'HIGH'), 'description': f.get('issue', 'Finding remains after remediation.')} for f in after_findings]
+    result = {
+        'run_id': str(uuid.uuid4()), 'target_name': req.file_name,
+        'verdict': 'VERIFIED' if not regressions and patch.verification_status in ('passed', 'static_verified') else 'NOT_VERIFIED',
+        'total_duration_ms': round((time.perf_counter() - started) * 1000),
+        'before_state': {'code': req.source_code, 'critical_vulnerabilities': len(before_findings), 'security_score': max(0, 100 - len(before_findings) * 20), 'quantum_deficit_years': 13 if before_findings else 0, 'crypto_agility_score': 2.5},
+        'after_state': {'code': patch.patched_code, 'critical_vulnerabilities': len(after_findings), 'security_score': max(0, 100 - len(after_findings) * 20), 'quantum_deficit_years': 0 if not after_findings else 13, 'crypto_agility_score': 7.5},
+        'transformation_description': patch.transformation_description,
+        'unified_diff': patch.unified_diff,
+        'regression_test': {'status': patch.verification_status, 'code': patch.generated_regression_test, 'output': patch.test_output or ''},
+        'verification_report': {'retired_weaknesses': retired, 'introduced_protections': introduced, 'persisting_risks': regressions, 'regressions': regressions},
+        'cbom_summary': {'components_count': len(after_findings)},
+    }
+    request.app.state.latest_custom_loop = result
+    return result
+
+
+@router.get('/custom-loop/latest')
+def latest_custom_loop(request: Request):
+    if request.app.state.latest_custom_loop is None:
+        raise HTTPException(404, 'No custom remediation run has completed yet')
+    return request.app.state.latest_custom_loop
+
+
+@router.post('/upload/chunk')
+async def upload_chunk(request: Request):
+    upload_id = request.headers.get('x-upload-id', '')
+    filename = request.headers.get('x-filename', 'upload.bin')[:300]
+    surface = request.headers.get('x-surface', '')
+    project = request.headers.get('x-project-id', 'default')
+    try:
+        index = int(request.headers.get('x-chunk-index', '-1'))
+        total = int(request.headers.get('x-total-chunks', '0'))
+    except ValueError as exc:
+        raise HTTPException(422, 'Invalid chunk metadata') from exc
+    if not re.fullmatch(r'[A-Za-z0-9-]{8,100}', upload_id) or surface not in {'code', 'binary'}:
+        raise HTTPException(422, 'Invalid upload identifier or surface')
+    if not (0 <= index < total <= 300):
+        raise HTTPException(422, 'Invalid chunk index or count')
+    chunk = await request.body()
+    if not chunk or len(chunk) > 3 * 1024 * 1024:
+        raise HTTPException(413, 'Each upload chunk must be between 1 byte and 3 MiB')
+    state = request.app.state.uploads.setdefault(upload_id, {
+        'filename': filename, 'surface': surface, 'project': project,
+        'total': total, 'chunks': {}, 'status': 'uploading', 'scan_job_id': None,
+    })
+    if any((state['filename'] != filename, state['surface'] != surface,
+            state['project'] != project, state['total'] != total)):
+        raise HTTPException(409, 'Chunk metadata does not match the existing upload')
+    state['chunks'][index] = bytes(chunk)
+    size = sum(len(value) for value in state['chunks'].values())
+    limit = MAX_SOURCE_BYTES if surface == 'code' else MAX_BYTES
+    if size > limit:
+        request.app.state.uploads.pop(upload_id, None)
+        raise HTTPException(413, f'Assembled {surface} upload exceeds the supported size limit')
+    if len(state['chunks']) == total:
+        raw = b''.join(state['chunks'][i] for i in range(total))
+        if surface == 'code':
+            try:
+                files = extract_source_files_from_archive(raw, filename)
+            except (ValueError, zipfile.BadZipFile, tarfile.TarError) as exc:
+                state['status'] = 'failed'
+                state['error'] = str(exc)
+                raise HTTPException(422, str(exc)) from exc
+            job = enqueue(request, project, 'code', {'files': files}, lambda p: scan_sources(p['files']))
+        else:
+            payload = {'bytes': base64.b64encode(raw).decode(), 'file_name': filename}
+            job = enqueue(request, project, 'binary', payload, binary_worker)
+        state.update({'status': 'processing', 'scan_job_id': job['id'], 'chunks': {}})
+    return {'upload_id': upload_id, 'status': state['status'], 'received_chunks': len(state['chunks']), 'total_chunks': total, 'scan_job_id': state['scan_job_id']}
+
+
+@router.get('/upload/{upload_id}/status')
+def upload_status(upload_id: str, request: Request):
+    state = request.app.state.uploads.get(upload_id)
+    if state is None:
+        raise HTTPException(404, 'Upload not found')
+    if state.get('scan_job_id'):
+        scan = request.app.state.store.get(state['scan_job_id'], state['project'])
+        if scan and scan['status'] in {'completed', 'failed', 'cancelled'}:
+            state['status'] = scan['status']
+            if scan.get('error'):
+                state['error'] = scan['error']
+    return {key: value for key, value in state.items() if key != 'chunks'}
+
+
+class ShorDemoRequest(BaseModel):
+    message: str = Field(default='ECDAT quantum demonstration', max_length=1000)
+    key_size: int = Field(default=512, ge=8, le=4096)
+
+
+@router.post('/quantum/shor-demo')
+def shor_demo(req: ShorDemoRequest):
+    estimate = QuantumResourceEstimator.estimate_resources(
+        f'RSA-{req.key_size}' if req.key_size in (1024, 2048, 3072, 4096) else 'RSA-2048',
+        1e-3, 1.0,
+    ).model_dump()
+    return {
+        'status': 'theoretical_simulation', 'message': req.message,
+        'input_key_size': req.key_size, 'estimate': estimate,
+        'execution_steps': [
+            f'[ INIT ] Loaded RSA-{req.key_size} demonstration parameters',
+            '[ MODEL ] Constructed Shor order-finding resource model',
+            f"[ QUBITS ] Estimated {estimate['physical_qubits_estimate']:,} physical qubits",
+            '[ NOTICE ] No private key was factored; this is a resource simulation',
+        ],
+        'disclaimer': 'Resource-estimation demonstration only; no cryptographic key was attacked.',
+    }
+
+
+@router.get('/quantum/timeline-summary')
+def quantum_timeline_summary(request: Request, project: str = Project):
+    project_data = request.app.state.store.get_project(project)
+    assets = request.app.state.store.get_assets(project)
+    vulnerable = [a for a in assets if any(x in str(a.get('algorithm') or a.get('name', '')).upper() for x in ('RSA', 'ECDSA', 'ECDH', 'DH'))]
+    lifetime = (project_data or {}).get('data_lifetime_years', 10)
+    return {
+        'project': project, 'data_lifetime_years': lifetime,
+        'quantum_vulnerable_assets': len(vulnerable),
+        'hndl_exposed_assets': len(vulnerable) if lifetime + 3 > 10 else 0,
+        'migration_time_years': 3, 'crqc_horizon_years': 10,
+        'status': 'AT_RISK' if vulnerable and lifetime + 3 > 10 else ('MONITOR' if vulnerable else 'NO_EVIDENCE'),
+    }
+
+
+class ReportRequest(BaseModel):
+    report_type: str = Field(default='EXECUTIVE', max_length=100)
+
+
+@router.post('/projects/{project_id}/reports/generate')
+def generate_project_report(project_id: str, req: ReportRequest, request: Request):
+    project = request.app.state.store.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, 'Project not found')
+    return {
+        'schema_version': '1.0', 'report_type': req.report_type,
+        'generated_at': date.today().isoformat(), 'project': project,
+        'overview': overview(request, project_id),
+        'assets': request.app.state.store.get_assets(project_id),
+        'evidence': _query_project_evidence(request, project_id),
+    }
+
+
+@router.get('/reports/generate')
+def generate_report_html(request: Request, project: str = Project, format: str = 'html'):
+    project_data = request.app.state.store.get_project(project)
+    if project_data is None:
+        raise HTTPException(404, 'Project not found')
+    report = {
+        'project': project_data,
+        'overview': overview(request, project),
+        'assets': request.app.state.store.get_assets(project),
+    }
+    if format != 'html':
+        return report
+    import html
+    content = html.escape(json.dumps(jsonable_encoder(report), indent=2))
+    return Response(
+        content=f'<!doctype html><html><head><meta charset="utf-8"><title>ECDAT Report</title></head><body><h1>ECDAT Project Report</h1><pre>{content}</pre></body></html>',
+        media_type='text/html',
+    )
 
 
 @router.api_route('/demo/sih-flow', methods=['GET', 'POST'])

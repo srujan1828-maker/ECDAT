@@ -1,14 +1,8 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: "http://127.0.0.1:8000/api/:path*",
-      },
-    ];
-  },
-};
+// API forwarding is implemented by src/app/api/[...path]/route.ts so runtime
+// environment variables, authentication, upload limits, and normalized error
+// responses work identically in development, production, and containers.
+const nextConfig: NextConfig = {};
 
 export default nextConfig;
